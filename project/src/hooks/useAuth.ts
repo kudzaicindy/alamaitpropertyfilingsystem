@@ -189,25 +189,45 @@ export function useAuth() {
       ...options.headers
     };
 
-    try {
-      const response = await fetch(url, {
-        ...options,
-        headers,
-        credentials: 'include'
-      });
+    let retries = 3;
+    let lastError;
 
-      if (response.status === 401) {
-        logout();
-        throw new Error('Session expired');
-      }
+    while (retries > 0) {
+      try {
+        const response = await fetch(url, {
+          ...options,
+          headers,
+          credentials: 'include'
+        });
 
-      return response;
-    } catch (error) {
-      if (error instanceof Error && error.message === 'Session expired') {
-        throw error;
+        if (response.status === 401) {
+          logout();
+          throw new Error('Session expired');
+        }
+
+        if (response.status === 429) {
+          // Too many requests - wait and retry
+          await new Promise(resolve => setTimeout(resolve, (3 - retries) * 1000));
+          retries--;
+          continue;
+        }
+
+        return response;
+      } catch (error) {
+        lastError = error;
+        if (error instanceof Error && error.message === 'Session expired') {
+          throw error;
+        }
+        retries--;
+        if (retries > 0) {
+          // Wait before retrying (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, (3 - retries) * 1000));
+        }
       }
-      throw new Error('Network error occurred');
     }
+
+    // If we get here, all retries failed
+    throw new Error('Network error occurred after multiple retries');
   };
 
   // Helper function to check if user has a specific role

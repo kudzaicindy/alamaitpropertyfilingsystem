@@ -2,6 +2,15 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from './useAuth';
 import { Property } from '../types/property';
 
+// Add debounce utility
+const debounce = (func: Function, wait: number) => {
+  let timeout: NodeJS.Timeout;
+  return (...args: any[]) => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func(...args), wait);
+  };
+};
+
 export function usePropertyData() {
   const { fetchWithAuth, isAuthenticated, isPropertyManager } = useAuth();
   const [properties, setProperties] = useState<Property[]>([]);
@@ -36,47 +45,73 @@ export function usePropertyData() {
       return;
     }
 
-      try {
-        setIsLoading(true);
+    try {
+      setIsLoading(true);
       setError(null);
-      const response = await fetchWithAuth('/api/properties');
-        
-        if (!response.ok) {
-        throw new Error('Failed to fetch properties');
+      
+      // Add retry logic
+      let retries = 3;
+      let lastError;
+      
+      while (retries > 0) {
+        try {
+          const response = await fetchWithAuth('/api/properties');
+          
+          if (!response.ok) {
+            throw new Error('Failed to fetch properties');
+          }
+          
+          const data = await response.json();
+          
+          // Handle different response formats
+          let propertiesArray: any[] = [];
+          if (Array.isArray(data)) {
+            propertiesArray = data;
+          } else if (data.properties && Array.isArray(data.properties)) {
+            propertiesArray = data.properties;
+          } else if (data.data && Array.isArray(data.data)) {
+            propertiesArray = data.data;
+          } else if (data.results && Array.isArray(data.results)) {
+            propertiesArray = data.results;
+          } else {
+            console.error('Unexpected API response format:', data);
+            throw new Error('Invalid data format received from server');
+          }
+          
+          // Transform the data to match our Property interface
+          const transformedProperties = propertiesArray.map(transformPropertyData);
+          setProperties(transformedProperties);
+          return; // Success, exit the retry loop
+        } catch (err) {
+          lastError = err;
+          retries--;
+          if (retries > 0) {
+            // Wait before retrying (exponential backoff)
+            await new Promise(resolve => setTimeout(resolve, (3 - retries) * 1000));
+          }
         }
-        
-        const data = await response.json();
-        
-      // Handle different response formats
-      let propertiesArray: any[] = [];
-      if (Array.isArray(data)) {
-        propertiesArray = data;
-      } else if (data.properties && Array.isArray(data.properties)) {
-        propertiesArray = data.properties;
-      } else if (data.data && Array.isArray(data.data)) {
-        propertiesArray = data.data;
-      } else if (data.results && Array.isArray(data.results)) {
-        propertiesArray = data.results;
-      } else {
-        console.error('Unexpected API response format:', data);
-          throw new Error('Invalid data format received from server');
-        }
-        
-      // Transform the data to match our Property interface
-      const transformedProperties = propertiesArray.map(transformPropertyData);
-      setProperties(transformedProperties);
-      } catch (err) {
-        console.error('Error fetching properties:', err);
+      }
+      
+      // If we get here, all retries failed
+      throw lastError;
+    } catch (err) {
+      console.error('Error fetching properties:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch properties');
       setProperties([]); // Set empty array on error
-      } finally {
-        setIsLoading(false);
-      }
+    } finally {
+      setIsLoading(false);
+    }
   }, [fetchWithAuth, isAuthenticated]);
 
+  // Debounce the fetchProperties function
+  const debouncedFetchProperties = useCallback(
+    debounce(fetchProperties, 500),
+    [fetchProperties]
+  );
+
   useEffect(() => {
-    fetchProperties();
-  }, [fetchProperties]);
+    debouncedFetchProperties();
+  }, [debouncedFetchProperties]);
 
   const addProperty = async (propertyData: Omit<Property, 'id'>) => {
     if (!isPropertyManager()) {
