@@ -8,10 +8,6 @@
   ],
   "routes": [
     {
-      "src": "/api/(.*)",
-      "dest": "http://localhost:3000/api/$1"
-    },
-    {
       "handle": "filesystem"
     },
     {
@@ -19,15 +15,10 @@
       "dest": "/index.html"
     }
   ],
-  "headers": [
+  "rewrites": [
     {
       "source": "/(.*)",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "s-maxage=1, stale-while-revalidate"
-        }
-      ]
+      "destination": "/"
     }
   ]
 } 
