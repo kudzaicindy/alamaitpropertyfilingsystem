@@ -1,0 +1,13 @@
+{
+  "dependencies": {
+    "@radix-ui/react-tabs": "^1.1.11",
+    "bcryptjs": "^3.0.2",
+    "clsx": "^2.1.1",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.15.0",
+    "react-router-dom": "^7.6.0",
+    "tailwind-merge": "^3.3.0"
+  }
+}
