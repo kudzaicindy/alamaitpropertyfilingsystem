@@ -1,5 +1,5 @@
 export interface PropertyDocument {
-  id: number;
+  id: string;
   name: string;
   type: 'Deed' | 'Confirmation' | 'Payment Receipt' | 'Allocation Letter' | 'Contract of Sale';
   location: string;
@@ -10,7 +10,7 @@ export interface PropertyDocument {
 }
 
 export interface Property {
-  id: number;
+  id: string;
   name: string;
   address: string;
   propertyType: 'House' | 'Land' | 'Flat' | 'Cottage' | 'Cluster';

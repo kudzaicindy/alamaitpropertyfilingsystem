@@ -1,15 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from './useAuth';
 import { Property } from '../types/property';
-
-// Add debounce utility
-const debounce = (func: Function, wait: number) => {
-  let timeout: NodeJS.Timeout;
-  return (...args: any[]) => {
-    clearTimeout(timeout);
-    timeout = setTimeout(() => func(...args), wait);
-  };
-};
 
 export function usePropertyData() {
   const { fetchWithAuth, isAuthenticated, isPropertyManager } = useAuth();
@@ -19,10 +10,14 @@ export function usePropertyData() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterKey, setFilterKey] = useState<keyof Property>('name');
   const [filterValue, setFilterValue] = useState('');
+  
+  // Use ref to track the active request and pending operations
+  const activeRequestRef = useRef<Promise<any> | null>(null);
+  const pendingOperationsRef = useRef<(() => Promise<void>)[]>([]);
 
   const transformPropertyData = (data: any): Property => {
     return {
-      id: data._id || data.id,
+      id: String(data._id || data.id), // Ensure ID is always a string
       name: data.name || '',
       address: data.address || '',
       propertyType: data.propertyType || 'House',
@@ -39,105 +34,133 @@ export function usePropertyData() {
     };
   };
 
+  const executePendingOperations = useCallback(async () => {
+    while (pendingOperationsRef.current.length > 0) {
+      const operation = pendingOperationsRef.current.shift();
+      if (operation) {
+        await operation();
+      }
+    }
+  }, []);
+
+  const queueOperation = useCallback(async <T>(operation: () => Promise<T>): Promise<T> => {
+    if (activeRequestRef.current) {
+      return new Promise<T>((resolve, reject) => {
+        pendingOperationsRef.current.push(async () => {
+          try {
+            const result = await operation();
+            resolve(result);
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+    }
+
+    try {
+      activeRequestRef.current = operation();
+      const result = await activeRequestRef.current;
+      return result;
+    } finally {
+      activeRequestRef.current = null;
+      await executePendingOperations();
+    }
+  }, [executePendingOperations]);
+
   const fetchProperties = useCallback(async () => {
     if (!isAuthenticated) {
       setIsLoading(false);
       return;
     }
 
-    try {
-      setIsLoading(true);
-      setError(null);
-      
-      // Add retry logic
-      let retries = 3;
-      let lastError;
-      
-      while (retries > 0) {
-        try {
-          const response = await fetchWithAuth('/api/properties');
-          
-          if (!response.ok) {
-            throw new Error('Failed to fetch properties');
-          }
-          
-          const data = await response.json();
-          
-          // Handle different response formats
-          let propertiesArray: any[] = [];
-          if (Array.isArray(data)) {
-            propertiesArray = data;
-          } else if (data.properties && Array.isArray(data.properties)) {
-            propertiesArray = data.properties;
-          } else if (data.data && Array.isArray(data.data)) {
-            propertiesArray = data.data;
-          } else if (data.results && Array.isArray(data.results)) {
-            propertiesArray = data.results;
-          } else {
-            console.error('Unexpected API response format:', data);
-            throw new Error('Invalid data format received from server');
-          }
-          
-          // Transform the data to match our Property interface
-          const transformedProperties = propertiesArray.map(transformPropertyData);
-          setProperties(transformedProperties);
-          return; // Success, exit the retry loop
-        } catch (err) {
-          lastError = err;
-          retries--;
-          if (retries > 0) {
-            // Wait before retrying (exponential backoff)
-            await new Promise(resolve => setTimeout(resolve, (3 - retries) * 1000));
+    return queueOperation(async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+        
+        let retries = 3;
+        let lastError;
+        
+        while (retries > 0) {
+          try {
+            const response = await fetchWithAuth('/api/properties');
+            
+            if (!response.ok) {
+              throw new Error('Failed to fetch properties');
+            }
+            
+            const data = await response.json();
+            
+            let propertiesArray: any[] = [];
+            if (Array.isArray(data)) {
+              propertiesArray = data;
+            } else if (data.properties && Array.isArray(data.properties)) {
+              propertiesArray = data.properties;
+            } else if (data.data && Array.isArray(data.data)) {
+              propertiesArray = data.data;
+            } else if (data.results && Array.isArray(data.results)) {
+              propertiesArray = data.results;
+            } else {
+              console.error('Unexpected API response format:', data);
+              throw new Error('Invalid data format received from server');
+            }
+            
+            const transformedProperties = propertiesArray.map(transformPropertyData);
+            setProperties(transformedProperties);
+            return transformedProperties;
+          } catch (err) {
+            lastError = err;
+            retries--;
+            if (retries > 0) {
+              await new Promise(resolve => setTimeout(resolve, (3 - retries) * 1000));
+            }
           }
         }
+        
+        throw lastError;
+      } catch (err) {
+        console.error('Error fetching properties:', err);
+        setError(err instanceof Error ? err.message : 'Failed to fetch properties');
+        setProperties([]);
+        throw err;
+      } finally {
+        setIsLoading(false);
       }
-      
-      // If we get here, all retries failed
-      throw lastError;
-    } catch (err) {
-      console.error('Error fetching properties:', err);
-      setError(err instanceof Error ? err.message : 'Failed to fetch properties');
-      setProperties([]); // Set empty array on error
-    } finally {
-      setIsLoading(false);
-    }
-  }, [fetchWithAuth, isAuthenticated]);
+    });
+  }, [fetchWithAuth, isAuthenticated, queueOperation]);
 
-  // Debounce the fetchProperties function
-  const debouncedFetchProperties = useCallback(
-    debounce(fetchProperties, 500),
-    [fetchProperties]
-  );
-
+  // Initial fetch
   useEffect(() => {
-    debouncedFetchProperties();
-  }, [debouncedFetchProperties]);
+    fetchProperties();
+  }, [fetchProperties]);
 
   const addProperty = async (propertyData: Omit<Property, 'id'>) => {
     if (!isPropertyManager()) {
       throw new Error('Only property managers can add properties');
     }
 
-    try {
-      setError(null);
-      const response = await fetchWithAuth('/api/properties', {
-        method: 'POST',
-        body: JSON.stringify(propertyData)
-      });
+    return queueOperation(async () => {
+      try {
+        setError(null);
+        const response = await fetchWithAuth('/api/properties', {
+          method: 'POST',
+          body: JSON.stringify(propertyData)
+        });
 
-      if (!response.ok) {
-        throw new Error('Failed to add property');
+        if (!response.ok) {
+          throw new Error('Failed to add property');
+        }
+
+        const newProperty = await response.json();
+        const transformedProperty = transformPropertyData(newProperty);
+        setProperties(prev => [...prev, transformedProperty]);
+        return transformedProperty;
+      } catch (err) {
+        console.error('Error adding property:', err);
+        setError(err instanceof Error ? err.message : 'Failed to add property');
+        throw err;
       }
-
-      const newProperty = await response.json();
-      const transformedProperty = transformPropertyData(newProperty);
-      setProperties(prev => [...prev, transformedProperty]);
-      return transformedProperty;
-    } catch (err) {
-      console.error('Error adding property:', err);
-      setError(err instanceof Error ? err.message : 'Failed to add property');
-      throw err;
-    }
+    });
   };
 
   const updateProperty = async (id: string, propertyData: Partial<Property>) => {
@@ -145,30 +168,32 @@ export function usePropertyData() {
       throw new Error('Only property managers can update properties');
     }
 
-    try {
-      setError(null);
-      const response = await fetchWithAuth(`/api/properties/${id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(propertyData)
-      });
+    return queueOperation(async () => {
+      try {
+        setError(null);
+        const response = await fetchWithAuth(`/api/properties/${id}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(propertyData)
+        });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => null);
-        throw new Error(errorData?.message || 'Failed to update property');
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => null);
+          throw new Error(errorData?.message || 'Failed to update property');
+        }
+
+        const updatedProperty = await response.json();
+        const transformedProperty = transformPropertyData(updatedProperty);
+        setProperties(prev => prev.map(p => p.id === id ? transformedProperty : p));
+        return transformedProperty;
+      } catch (err) {
+        console.error('Error updating property:', err);
+        setError(err instanceof Error ? err.message : 'Failed to update property');
+        throw err;
       }
-
-      const updatedProperty = await response.json();
-      const transformedProperty = transformPropertyData(updatedProperty);
-      setProperties(prev => prev.map(p => p.id === id ? transformedProperty : p));
-      return transformedProperty;
-    } catch (err) {
-      console.error('Error updating property:', err);
-      setError(err instanceof Error ? err.message : 'Failed to update property');
-      throw err;
-    }
+    });
   };
 
   const deleteProperty = async (id: string) => {
@@ -176,30 +201,32 @@ export function usePropertyData() {
       throw new Error('Only property managers can delete properties');
     }
 
-    try {
-      setError(null);
-      const response = await fetchWithAuth(`/api/properties/${id}`, {
-        method: 'DELETE'
-      });
+    return queueOperation(async () => {
+      try {
+        setError(null);
+        const response = await fetchWithAuth(`/api/properties/${id}`, {
+          method: 'DELETE'
+        });
 
-      if (!response.ok) {
-        throw new Error('Failed to delete property');
+        if (!response.ok) {
+          throw new Error('Failed to delete property');
+        }
+
+        setProperties(prev => prev.filter(p => p.id !== id));
+      } catch (err) {
+        console.error('Error deleting property:', err);
+        setError(err instanceof Error ? err.message : 'Failed to delete property');
+        throw err;
       }
-
-      setProperties(prev => prev.filter(p => p.id !== id));
-    } catch (err) {
-      console.error('Error deleting property:', err);
-      setError(err instanceof Error ? err.message : 'Failed to delete property');
-      throw err;
-    }
+    });
   };
 
   const filteredProperties = properties.filter(property => {
     const matchesSearch = property.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          property.address.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesFilter = !filterValue || String(property[filterKey]).toLowerCase().includes(filterValue.toLowerCase());
-      return matchesSearch && matchesFilter;
-    });
+    return matchesSearch && matchesFilter;
+  });
 
   return {
     properties: filteredProperties,
