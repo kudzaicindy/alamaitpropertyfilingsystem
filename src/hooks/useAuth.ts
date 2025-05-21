@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { API_BASE_URL } from '../config/api';
+import { API_BASE_URL } from '../config/api'; // Ensure correct path
 
 interface User {
   id: string;
@@ -32,13 +32,12 @@ export function useAuth() {
     isLoading: true
   });
 
-  // Initialize auth state from localStorage
   useEffect(() => {
     const initializeAuth = async () => {
       try {
-    const token = localStorage.getItem('token');
+        const token = localStorage.getItem('token');
         const userStr = localStorage.getItem('user');
-        
+
         if (!token || !userStr) {
           setAuthState({
             user: null,
@@ -55,8 +54,7 @@ export function useAuth() {
             throw new Error('Invalid user data structure');
           }
 
-          // Verify token validity using the proxy
-          const response = await fetch('/api/auth/me', {
+          const response = await fetch(`${API_BASE_URL}/auth/me`, {
             headers: {
               'Authorization': `Bearer ${token}`
             }
@@ -67,7 +65,7 @@ export function useAuth() {
           }
 
           setAuthState({
-      token,
+            token,
             user,
             isAuthenticated: true,
             isLoading: false
@@ -99,7 +97,7 @@ export function useAuth() {
 
   const login = async (email: string, password: string) => {
     try {
-      const response = await fetch('/api/auth/login', {
+      const response = await fetch(`${API_BASE_URL}/auth/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -126,7 +124,7 @@ export function useAuth() {
         isAuthenticated: true,
         isLoading: false
       });
-      
+
       return data;
     } catch (error) {
       console.error('Login error:', error);
@@ -147,7 +145,7 @@ export function useAuth() {
 
   const register = async (email: string, password: string, name: string, role?: string) => {
     try {
-      const response = await fetch('/api/auth/register', {
+      const response = await fetch(`${API_BASE_URL}/auth/register`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -170,7 +168,7 @@ export function useAuth() {
 
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
-      
+
       return data;
     } catch (error) {
       console.error('Registration error:', error);
@@ -251,4 +249,6 @@ export function useAuth() {
     hasRole,
     isPropertyManager
   };
-} 
+}
+
+export default useAuth;
