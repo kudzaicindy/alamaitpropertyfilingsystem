@@ -11,7 +11,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: process.env.VITE_API_URL || 'http://localhost:3000',
+        target: process.env.VITE_API_URL || 'https://propertyfiling-backendnode.onrender.com',
         changeOrigin: true,
         secure: false,
         configure: (proxy, _options) => {

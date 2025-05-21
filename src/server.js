@@ -24,7 +24,7 @@ app.use(cors({
 app.use(express.json());
 
 // Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/alamait', {
+mongoose.connect(process.env.MONGODB_URI || 'mongodb+srv://macdonald:macdonald24@cluster0.xwn5n3c.mongodb.net', {
   useNewUrlParser: true,
   useUnifiedTopology: true
 })

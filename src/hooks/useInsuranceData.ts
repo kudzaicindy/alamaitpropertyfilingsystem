@@ -49,7 +49,7 @@ export function useInsuranceData() {
 
       const [propertyRes, vehicleRes, assetRes] = await Promise.all([
         fetchWithAuth('/api/insurance/propertyinsured'),
-        fetchWithAuth('/api/insurance/insuredcars'),
+        fetchWithAuth('/insuredcars'),
         fetchWithAuth('/api/insurance/insuredcover')
       ]);
 
