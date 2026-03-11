@@ -117,6 +117,23 @@ export function useDocuments(properties = []) {
     [fetchWithAuth, properties]
   );
 
+  /** Get one document by id (e.g. for digitalFileUrl when viewing) */
+  const getDocument = useCallback(
+    async (id) => {
+      if (!id || !isAuthenticated) return null;
+      try {
+        const res = await fetchWithAuth(`/api/documents/${id}`);
+        if (!res.ok) return null;
+        const json = await res.json();
+        const raw = json.data ?? json;
+        return raw ? toUIDoc(raw, properties) : null;
+      } catch {
+        return null;
+      }
+    },
+    [fetchWithAuth, isAuthenticated, properties]
+  );
+
   const refreshDocuments = fetchDocuments;
 
   return {
@@ -126,6 +143,7 @@ export function useDocuments(properties = []) {
     fetchDocuments,
     uploadDocument,
     createDocument,
+    getDocument,
     refreshDocuments,
     toUIDoc: (d) => toUIDoc(d, properties),
   };

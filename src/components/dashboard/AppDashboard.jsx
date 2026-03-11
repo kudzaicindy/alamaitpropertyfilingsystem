@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { usePropertyData } from '../../hooks/usePropertyData';
 import { useInsuranceData } from '../../hooks/useInsuranceData';
+import { useDocuments } from '../../hooks/useDocuments';
 
 /* ─── helpers ─────────────────────────────────────────────────── */
 const fmt = (n) =>
@@ -325,16 +326,24 @@ export default function AppDashboard() {
   const { logout, user } = useAuth();
   const { properties, isLoading: propLoading, addProperty } = usePropertyData();
   const { propertyInsurance, vehicleInsurance, assetInsurance, insuredCover, isLoading: insLoading } = useInsuranceData();
+  const {
+    documents: documentsList,
+    isLoading: docsLoading,
+    uploadDocument,
+    createDocument,
+    getDocument,
+    refreshDocuments,
+  } = useDocuments(properties);
 
   const [page, setPage] = useState('dashboard');
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [entityFilter, setEntityFilter] = useState('');
-   const [docCategory, setDocCategory] = useState('all');
+  const [docCategory, setDocCategory] = useState('all');
   const [docSearch, setDocSearch] = useState('');
-  const [documentsList, setDocumentsList] = useState(DOCUMENTS_INITIAL);
   const [docUploadOpen, setDocUploadOpen] = useState(false);
   const [docUploadFile, setDocUploadFile] = useState(null);
+  const [docUploading, setDocUploading] = useState(false);
   const [insCategory, setInsCategory] = useState('all');
   const [insSearch, setInsSearch] = useState('');
   const [insStatusFilter, setInsStatusFilter] = useState(''); // '', 'insured', 'uninsured'
@@ -343,6 +352,7 @@ export default function AppDashboard() {
   const [modalOpen, setModalOpen] = useState(false);
   const [detailProp, setDetailProp] = useState(null);
   const [selectedDoc, setSelectedDoc] = useState(null);
+  const [docDetail, setDocDetail] = useState(null); // full doc with digitalFileUrl when viewing
   const [toast, setToast] = useState('');
 
   const totalVal = properties.reduce((s, p) => s + (p.estimatedCurrentValue || 0), 0);
@@ -394,32 +404,60 @@ export default function AppDashboard() {
     }
   };
 
-  const handleDocUpload = (e) => {
+  useEffect(() => {
+    if (!selectedDoc) {
+      setDocDetail(null);
+      return;
+    }
+    let cancelled = false;
+    getDocument(selectedDoc.id).then((full) => {
+      if (!cancelled && full) setDocDetail(full);
+    });
+    return () => { cancelled = true; };
+  }, [selectedDoc?.id, getDocument]);
+
+  const handleDocUpload = async (e) => {
     e.preventDefault();
     const name = document.getElementById('doc-name')?.value?.trim();
     if (!name) { showToast('Enter document name'); return; }
     const category = document.getElementById('doc-category')?.value || 'legal';
-    const propertyName = document.getElementById('doc-property')?.value?.trim() || '—';
-    const date = document.getElementById('doc-date')?.value?.trim() || new Date().toISOString().slice(0, 7);
+    const referenceId = document.getElementById('doc-property-id')?.value?.trim() || '';
     const hasPhysical = document.getElementById('doc-has-physical')?.checked ?? false;
     const physicalLocation = document.getElementById('doc-physical-location')?.value?.trim() || '';
-    const hasDigital = !!docUploadFile;
-    const newDoc = {
-      id: 'd' + Date.now(),
-      name,
-      propertyName,
-      date: date.length >= 7 ? new Date(date + '-01').toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }) : date,
-      category,
-      hasDigitalCopy: hasDigital,
-      hasPhysicalCopy: hasPhysical,
-      physicalLocation: hasPhysical ? physicalLocation : '',
-      digitalFileName: docUploadFile?.name || null,
-    };
-    setDocumentsList((prev) => [...prev, newDoc]);
-    setDocUploadOpen(false);
-    setDocUploadFile(null);
-    document.getElementById('doc-upload-form')?.reset();
-    showToast('Document added. Upload storage requires backend.');
+    const referenceType = referenceId ? 'property' : 'general';
+    setDocUploading(true);
+    try {
+      if (docUploadFile) {
+        const formData = new FormData();
+        formData.append('file', docUploadFile);
+        formData.append('title', name);
+        formData.append('documentType', category);
+        formData.append('referenceType', referenceType);
+        if (referenceId) formData.append('referenceId', referenceId);
+        formData.append('hasPhysicalCopy', hasPhysical ? 'true' : 'false');
+        if (physicalLocation) formData.append('physicalCopyLocation', physicalLocation);
+        await uploadDocument(formData);
+        showToast('Document uploaded successfully');
+      } else {
+        await createDocument({
+          title: name,
+          documentType: category,
+          referenceType,
+          referenceId: referenceId || undefined,
+          hasPhysicalCopy: hasPhysical,
+          physicalCopyLocation: physicalLocation,
+        });
+        showToast('Document created successfully');
+      }
+      await refreshDocuments();
+      setDocUploadOpen(false);
+      setDocUploadFile(null);
+      document.getElementById('doc-upload-form')?.reset();
+    } catch (err) {
+      showToast(err.message || 'Failed to save document');
+    } finally {
+      setDocUploading(false);
+    }
   };
 
   /* initials from email */
@@ -1099,8 +1137,9 @@ export default function AppDashboard() {
                     type="button"
                     className="btn btn-maroon btn-sm"
                     onClick={() => setDocUploadOpen(true)}
+                    disabled={docUploading}
                   >
-                    ↑ Upload
+                    {docUploading ? 'Uploading…' : '↑ Upload'}
                   </button>
                 </div>
               </div>
@@ -1274,46 +1313,52 @@ export default function AppDashboard() {
         )}
 
         {/* ════ DOCUMENT DETAIL MODAL ════ */}
-        {selectedDoc && (
-          <div style={S.mbg} onClick={() => setSelectedDoc(null)}>
+        {selectedDoc && (() => {
+          const doc = docDetail || selectedDoc;
+          return (
+          <div style={S.mbg} onClick={() => { setSelectedDoc(null); setDocDetail(null); }}>
             <div className="modal" style={{ maxWidth: 460, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
               <div className="mhd">
-                <button type="button" className="mx" onClick={() => setSelectedDoc(null)}>×</button>
-                <div className="mtitle">{selectedDoc.name}</div>
-                <div className="msub">Document · {selectedDoc.propertyName || '—'}</div>
+                <button type="button" className="mx" onClick={() => { setSelectedDoc(null); setDocDetail(null); }}>×</button>
+                <div className="mtitle">{doc.name}</div>
+                <div className="msub">Document · {doc.propertyName || '—'}</div>
               </div>
               <div className="mbody">
                 <div style={{ fontSize: 13 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-light)' }}>
                     <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Category</span>
-                    <span>{DOCUMENT_CATEGORIES.find(c => c.id === selectedDoc.category)?.label || selectedDoc.category}</span>
+                    <span>{DOCUMENT_CATEGORIES.find(c => c.id === doc.category)?.label || doc.category}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-light)' }}>
                     <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Property</span>
-                    <span>{selectedDoc.propertyName || '—'}</span>
+                    <span>{doc.propertyName || '—'}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-light)' }}>
                     <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Date</span>
-                    <span>{selectedDoc.date || '—'}</span>
+                    <span>{doc.date || '—'}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-light)' }}>
                     <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Digital copy</span>
-                    <span>{selectedDoc.hasDigitalCopy ? (selectedDoc.digitalFileName || 'Yes') : 'No digital copy'}</span>
+                    <span>{doc.hasDigitalCopy ? (doc.digitalFileName || 'Yes') : 'No digital copy'}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0' }}>
                     <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Physical location</span>
                     <span style={{ textAlign: 'right', maxWidth: '60%' }}>
-                      {selectedDoc.hasPhysicalCopy ? (selectedDoc.physicalLocation || 'Recorded') : 'No physical copy'}
+                      {doc.hasPhysicalCopy ? (doc.physicalLocation || 'Recorded') : 'No physical copy'}
                     </span>
                   </div>
                 </div>
               </div>
               <div className="mfoot">
-                <button type="button" className="btn btn-outline" onClick={() => setSelectedDoc(null)}>Close</button>
+                {doc.hasDigitalCopy && doc.digitalFileUrl && (
+                  <a href={doc.digitalFileUrl} target="_blank" rel="noopener noreferrer" className="btn btn-maroon" style={{ marginRight: 8 }}>View digital copy</a>
+                )}
+                <button type="button" className="btn btn-outline" onClick={() => { setSelectedDoc(null); setDocDetail(null); }}>Close</button>
               </div>
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {/* ════ UPLOAD DOCUMENT MODAL ════ */}
         {docUploadOpen && (
@@ -1338,11 +1383,11 @@ export default function AppDashboard() {
                       </select>
                     </div>
                     <div>
-                      <label className="ml" htmlFor="doc-property">Property</label>
-                      <input className="mi" id="doc-property" list="doc-property-list" placeholder="e.g. Breach, Kingsmead" />
-                      <datalist id="doc-property-list">
-                        {properties.map(p => <option key={p.id} value={p.name} />)}
-                      </datalist>
+                      <label className="ml" htmlFor="doc-property-id">Property</label>
+                      <select className="ms" id="doc-property-id">
+                        <option value="">— General</option>
+                        {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
                     </div>
                     <div>
                       <label className="ml" htmlFor="doc-date">Date (month)</label>
@@ -1468,7 +1513,7 @@ export default function AppDashboard() {
                 <div className="sp-sec">
                   <div className="sp-sec-t">Documents</div>
                   {(() => {
-                    const docsForProp = documentsList.filter(d => d.propertyName === detailProp.name);
+                    const docsForProp = documentsList.filter(d => d.referenceType === 'property' && String(d.referenceId) === String(detailProp.id));
                     if (!docsForProp.length) {
                       return <div style={{ fontSize: 12, color: 'var(--muted)' }}>No documents linked to this property yet.</div>;
                     }
