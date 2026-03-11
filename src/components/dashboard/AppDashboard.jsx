@@ -342,6 +342,7 @@ export default function AppDashboard() {
   const [assetKey, setAssetKey] = useState(Object.keys(STATIC_ASSETS)[0] || null);
   const [modalOpen, setModalOpen] = useState(false);
   const [detailProp, setDetailProp] = useState(null);
+  const [selectedDoc, setSelectedDoc] = useState(null);
   const [toast, setToast] = useState('');
 
   const totalVal = properties.reduce((s, p) => s + (p.estimatedCurrentValue || 0), 0);
@@ -678,14 +679,29 @@ export default function AppDashboard() {
 
           {/* ════ INSURANCE (tabs + grid; Property tab matches screenshot) ════ */}
           {page === 'insurance' && (() => {
-            const propInsured = propertyInsurance.filter((p) => p.insurance === 'Yes' || p.insurance === true);
-            const propUninsured = propertyInsurance.filter((p) => p.insurance !== 'Yes' && p.insurance !== true);
-            const totalInsuredValue = propertyInsurance.reduce((s, p) => s + (Number(p.amountInsured) || 0), 0);
-            const annualPremium = propertyInsurance.reduce((s, p) => s + (Number(p.termlyPremium) || 0) * 4, 0);
-            const coverInsured = insuredCover.filter((c) => c.insurance === 'Yes' || c.insurance === true);
-            const coverUninsured = insuredCover.filter((c) => c.insurance !== 'Yes' && c.insurance !== true);
-            const totalCoverValue = insuredCover.reduce((s, c) => s + (Number(c.amountInsured) || 0), 0);
-            const annualCoverPremium = insuredCover.reduce((s, c) => s + (Number(c.termlyPremium) || 0) * 4, 0);
+            const q = (insSearch || '').toLowerCase();
+            const matchProp = (p) => !q || [p.propertyName, p.insurer, p.address, p.propertyRef].some(v => String(v || '').toLowerCase().includes(q));
+            const matchCover = (c) => !q || [c.cover, c.insurer, c.address, c.propertyRef].some(v => String(v || '').toLowerCase().includes(q));
+            const matchVehicle = (v) => !q || [v.name, v.vehicleName, v.insurer, v.provider, v.policyNumber].some(x => String(x || '').toLowerCase().includes(q));
+            const isInsured = (item) => item.insurance === 'Yes' || item.insurance === true;
+            let filteredPropertyInsurance = propertyInsurance.filter(matchProp);
+            let filteredInsuredCover = insuredCover.filter(matchCover);
+            const filteredVehicleInsurance = vehicleInsurance.filter(matchVehicle);
+            if (insStatusFilter === 'insured') {
+              filteredPropertyInsurance = filteredPropertyInsurance.filter(isInsured);
+              filteredInsuredCover = filteredInsuredCover.filter(isInsured);
+            } else if (insStatusFilter === 'uninsured') {
+              filteredPropertyInsurance = filteredPropertyInsurance.filter(p => !isInsured(p));
+              filteredInsuredCover = filteredInsuredCover.filter(c => !isInsured(c));
+            }
+            const propInsured = filteredPropertyInsurance.filter(isInsured);
+            const propUninsured = filteredPropertyInsurance.filter(p => !isInsured(p));
+            const totalInsuredValue = filteredPropertyInsurance.reduce((s, p) => s + (Number(p.amountInsured) || 0), 0);
+            const annualPremium = filteredPropertyInsurance.reduce((s, p) => s + (Number(p.termlyPremium) || 0) * 4, 0);
+            const coverInsured = filteredInsuredCover.filter(isInsured);
+            const coverUninsured = filteredInsuredCover.filter(c => !isInsured(c));
+            const totalCoverValue = filteredInsuredCover.reduce((s, c) => s + (Number(c.amountInsured) || 0), 0);
+            const annualCoverPremium = filteredInsuredCover.reduce((s, c) => s + (Number(c.termlyPremium) || 0) * 4, 0);
             const fmtCur = (n) => (n >= 1e6 ? '$' + (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? '~$' + (n / 1e3).toFixed(0) + 'K' : '$' + (n || 0).toLocaleString());
             const nextRenewal = (d) => (d ? (typeof d === 'string' ? d.slice(0, 7) : d) : '—');
             const getPropType = (ref) => {
@@ -734,7 +750,7 @@ export default function AppDashboard() {
                   <div className="kpi-row" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
                     <div className="kpi k-green">
                       <div className="kpi-lbl">Policies</div>
-                      <div className="kpi-val">{vehicleInsurance.length}</div>
+                      <div className="kpi-val">{filteredVehicleInsurance.length}</div>
                       <div className="kpi-sub">Vehicle policies</div>
                     </div>
                     <div className="kpi k-red">
@@ -780,26 +796,43 @@ export default function AppDashboard() {
                   <div className="kpi-row" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
                     <div className="kpi k-green">
                       <div className="kpi-lbl">Property</div>
-                      <div className="kpi-val">{propertyInsurance.length}</div>
+                      <div className="kpi-val">{filteredPropertyInsurance.length}</div>
                       <div className="kpi-sub">Policies</div>
                     </div>
                     <div className="kpi">
                       <div className="kpi-lbl">Vehicle</div>
-                      <div className="kpi-val">{vehicleInsurance.length}</div>
+                      <div className="kpi-val">{filteredVehicleInsurance.length}</div>
                       <div className="kpi-sub">Policies</div>
                     </div>
                     <div className="kpi k-maroon">
                       <div className="kpi-lbl">Asset Cover</div>
-                      <div className="kpi-val">{assetInsurance.length}</div>
+                      <div className="kpi-val">{filteredInsuredCover.length}</div>
                       <div className="kpi-sub">Policies</div>
                     </div>
                     <div className="kpi">
                       <div className="kpi-lbl">Total</div>
-                      <div className="kpi-val">{propertyInsurance.length + vehicleInsurance.length + assetInsurance.length}</div>
+                      <div className="kpi-val">{filteredPropertyInsurance.length + filteredVehicleInsurance.length + filteredInsuredCover.length}</div>
                       <div className="kpi-sub">All types</div>
                     </div>
                   </div>
                 )}
+
+                <div className="fbar">
+                  <input
+                    className="fi"
+                    type="text"
+                    placeholder="Search name, insurer, address…"
+                    value={insSearch}
+                    onChange={e => setInsSearch(e.target.value)}
+                  />
+                  {(insCategory === 'property' || insCategory === 'cover') && (
+                    <select className="fs" value={insStatusFilter} onChange={e => setInsStatusFilter(e.target.value)}>
+                      <option value="">All status</option>
+                      <option value="insured">Insured only</option>
+                      <option value="uninsured">Uninsured only</option>
+                    </select>
+                  )}
+                </div>
 
                 <div className="dtabs">
                   {[
@@ -823,10 +856,10 @@ export default function AppDashboard() {
 
                 {insCategory === 'property' ? (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
-                    {propertyInsurance.length === 0 && !insLoading && (
+                    {filteredPropertyInsurance.length === 0 && !insLoading && (
                       <div style={{ padding: 16, background: 'var(--navy-mist)', borderRadius: 0, color: 'var(--muted)', fontSize: 13, gridColumn: '1 / -1' }}>No property insurance records</div>
                     )}
-                    {propertyInsurance.map((item) => {
+                    {filteredPropertyInsurance.map((item) => {
                       const insured = item.insurance === 'Yes' || item.insurance === true;
                       return (
                         <div
@@ -875,10 +908,10 @@ export default function AppDashboard() {
                   </div>
                 ) : insCategory === 'cover' ? (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
-                    {insuredCover.length === 0 && !insLoading && (
+                    {filteredInsuredCover.length === 0 && !insLoading && (
                       <div style={{ padding: 16, background: 'var(--navy-mist)', borderRadius: 0, color: 'var(--muted)', fontSize: 13, gridColumn: '1 / -1' }}>No insured cover records</div>
                     )}
-                    {insuredCover.map((item) => {
+                    {filteredInsuredCover.map((item) => {
                       const insured = item.insurance === 'Yes' || item.insurance === true;
                       return (
                         <div
@@ -978,7 +1011,7 @@ export default function AppDashboard() {
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '230px 1fr', gap: 18 }}>
-                <div style={{ background: '#fff', borderRadius: 12, border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)', overflow: 'hidden', alignSelf: 'flex-start', position: 'sticky', top: 80 }}>
+                <div style={{ background: '#fff', borderRadius: 0, border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)', overflow: 'hidden', alignSelf: 'flex-start', position: 'sticky', top: 80 }}>
                   <div style={{ background: 'var(--navy)', padding: '13px 16px', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.6)' }}>
                     Properties
                   </div>
@@ -1014,7 +1047,7 @@ export default function AppDashboard() {
                   })}
                 </div>
 
-                <div style={{ background: '#fff', borderRadius: 12, border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)', padding: 26 }}>
+                <div style={{ background: '#fff', borderRadius: 0, border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)', padding: 20 }}>
                   {!assetKey && (
                     <div style={{ textAlign: 'center', padding: '56px 20px', color: 'var(--muted)' }}>
                       <div style={{ fontSize: 40, marginBottom: 12 }}>📦</div>
@@ -1085,6 +1118,16 @@ export default function AppDashboard() {
                 ))}
               </div>
 
+              <div className="fbar">
+                <input
+                  className="fi"
+                  type="text"
+                  placeholder="Search name, property, location…"
+                  value={docSearch}
+                  onChange={e => setDocSearch(e.target.value)}
+                />
+              </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
                 <div
                   className="dcard dupload"
@@ -1099,7 +1142,14 @@ export default function AppDashboard() {
                 {(docCategory === 'all'
                   ? documentsList
                   : documentsList.filter((d) => d.category === docCategory)
-                ).map((doc) => {
+                )
+                  .filter((doc) => {
+                    const q = (docSearch || '').toLowerCase();
+                    if (!q) return true;
+                    return [doc.name, doc.propertyName, doc.category, doc.physicalLocation, doc.digitalFileName]
+                      .some(v => String(v || '').toLowerCase().includes(q));
+                  })
+                  .map((doc) => {
                   const hasDigital = doc.hasDigitalCopy;
                   const categoryLabel = DOCUMENT_CATEGORIES.find((c) => c.id === doc.category)?.label || doc.category;
                   return (
@@ -1114,7 +1164,7 @@ export default function AppDashboard() {
                         boxShadow: 'var(--shadow-sm)',
                         cursor: 'pointer',
                       }}
-                      onClick={() => showToast(doc.hasDigitalCopy ? `Open: ${doc.name}` : `${doc.name} — no digital copy`)}
+                      onClick={() => setSelectedDoc(doc)}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                         <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--muted)' }}>
@@ -1219,6 +1269,48 @@ export default function AppDashboard() {
                   <button type="submit" className="btn btn-maroon">Save Property</button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* ════ DOCUMENT DETAIL MODAL ════ */}
+        {selectedDoc && (
+          <div style={S.mbg} onClick={() => setSelectedDoc(null)}>
+            <div className="modal" style={{ maxWidth: 460, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+              <div className="mhd">
+                <button type="button" className="mx" onClick={() => setSelectedDoc(null)}>×</button>
+                <div className="mtitle">{selectedDoc.name}</div>
+                <div className="msub">Document · {selectedDoc.propertyName || '—'}</div>
+              </div>
+              <div className="mbody">
+                <div style={{ fontSize: 13 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-light)' }}>
+                    <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Category</span>
+                    <span>{DOCUMENT_CATEGORIES.find(c => c.id === selectedDoc.category)?.label || selectedDoc.category}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-light)' }}>
+                    <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Property</span>
+                    <span>{selectedDoc.propertyName || '—'}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-light)' }}>
+                    <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Date</span>
+                    <span>{selectedDoc.date || '—'}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-light)' }}>
+                    <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Digital copy</span>
+                    <span>{selectedDoc.hasDigitalCopy ? (selectedDoc.digitalFileName || 'Yes') : 'No digital copy'}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0' }}>
+                    <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Physical location</span>
+                    <span style={{ textAlign: 'right', maxWidth: '60%' }}>
+                      {selectedDoc.hasPhysicalCopy ? (selectedDoc.physicalLocation || 'Recorded') : 'No physical copy'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="mfoot">
+                <button type="button" className="btn btn-outline" onClick={() => setSelectedDoc(null)}>Close</button>
+              </div>
             </div>
           </div>
         )}
@@ -1372,6 +1464,37 @@ export default function AppDashboard() {
                       <div className="sp-val">{detailProp.nextPayment || '—'}</div>
                     </div>
                   </div>
+                </div>
+                <div className="sp-sec">
+                  <div className="sp-sec-t">Documents</div>
+                  {(() => {
+                    const docsForProp = documentsList.filter(d => d.propertyName === detailProp.name);
+                    if (!docsForProp.length) {
+                      return <div style={{ fontSize: 12, color: 'var(--muted)' }}>No documents linked to this property yet.</div>;
+                    }
+                    return (
+                      <div style={{ fontSize: 12 }}>
+                        <div style={{ marginBottom: 6 }}>
+                          <strong>{docsForProp.length}</strong> document{docsForProp.length > 1 ? 's' : ''} on file
+                        </div>
+                        <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {docsForProp.slice(0, 4).map(d => (
+                            <li key={d.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                              <span>{d.name}</span>
+                              <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                {d.hasDigitalCopy ? 'Digital' : 'No digital'} · {d.hasPhysicalCopy ? 'Physical' : 'No physical'}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                        {docsForProp.length > 4 && (
+                          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                            +{docsForProp.length - 4} more…
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
                 <div className="sp-acts">
                   <button type="button" className="btn btn-navy btn-sm" onClick={() => showToast('Edit — coming soon')}>Edit</button>
