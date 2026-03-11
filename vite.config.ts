@@ -12,8 +12,15 @@ export default defineConfig({
   resolve: {
     dedupe: ['react', 'react-dom', 'react/jsx-runtime'],
     alias: {
+      // Force ESM builds so Rollup never resolves CJS (avoids commonjs-external resolution bug)
       'react/jsx-runtime': path.resolve(__dirname, 'node_modules/react/jsx-runtime.js'),
       'react/jsx-dev-runtime': path.resolve(__dirname, 'node_modules/react/jsx-dev-runtime.js'),
+      'react/cjs/react.production.min.js': path.resolve(__dirname, 'node_modules/react/index.js'),
+      'react/cjs/react.development.js': path.resolve(__dirname, 'node_modules/react/index.js'),
+      'react/cjs/react-jsx-runtime.production.min.js': path.resolve(__dirname, 'node_modules/react/jsx-runtime.js'),
+      'react/cjs/react-jsx-runtime.development.js': path.resolve(__dirname, 'node_modules/react/jsx-dev-runtime.js'),
+      'react-dom/cjs/react-dom.production.min.js': path.resolve(__dirname, 'node_modules/react-dom/index.js'),
+      'react-dom/cjs/react-dom.development.js': path.resolve(__dirname, 'node_modules/react-dom/index.js'),
     },
   },
   optimizeDeps: {
