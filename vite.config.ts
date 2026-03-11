@@ -1,10 +1,21 @@
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
   base: '/',
+  resolve: {
+    dedupe: ['react', 'react-dom', 'react/jsx-runtime'],
+    alias: {
+      'react/jsx-runtime': path.resolve(__dirname, 'node_modules/react/jsx-runtime.js'),
+      'react/jsx-dev-runtime': path.resolve(__dirname, 'node_modules/react/jsx-dev-runtime.js'),
+    },
+  },
   optimizeDeps: {
     include: ['react', 'react-dom', 'react/jsx-runtime', 'react-router-dom'],
     exclude: ['lucide-react'],
