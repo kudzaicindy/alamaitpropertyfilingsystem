@@ -338,6 +338,9 @@ export default function AppDashboard() {
   const {
     propertyDocuments,
     isLoading: propDocsLoading,
+    getPropertyDocument,
+    updatePropertyDocument,
+    deletePropertyDocument,
   } = usePropertyDocuments();
 
   const [page, setPage] = useState('dashboard');
@@ -358,6 +361,7 @@ export default function AppDashboard() {
   const [detailProp, setDetailProp] = useState(null);
   const [selectedDoc, setSelectedDoc] = useState(null);
   const [docDetail, setDocDetail] = useState(null); // full doc with digitalFileUrl when viewing
+  const [propDocEdit, setPropDocEdit] = useState(null); // property document row being edited
   const [toast, setToast] = useState('');
 
   const totalVal = properties.reduce((s, p) => s + (p.estimatedCurrentValue || 0), 0);
@@ -462,6 +466,37 @@ export default function AppDashboard() {
       showToast(err.message || 'Failed to save document');
     } finally {
       setDocUploading(false);
+    }
+  };
+
+  const handleSavePropertyDocument = async (e) => {
+    e.preventDefault();
+    if (!propDocEdit?._id) return;
+    try {
+      await updatePropertyDocument(propDocEdit._id, {
+        propertyName: document.getElementById('prop-doc-propertyName')?.value?.trim() ?? '',
+        propertyUse: document.getElementById('prop-doc-propertyUse')?.value?.trim() ?? '',
+        titleDeedsPhysicalLocation: document.getElementById('prop-doc-titleDeedsPhysical')?.value?.trim() ?? '',
+        titleDeedsDigitalDescription: document.getElementById('prop-doc-titleDeedsDigital')?.value?.trim() ?? '',
+        plansDescription: document.getElementById('prop-doc-plans')?.value?.trim() ?? '',
+        permitsDescription: document.getElementById('prop-doc-permits')?.value?.trim() ?? '',
+        leaseAgreementDescription: document.getElementById('prop-doc-lease')?.value?.trim() ?? '',
+        fileLocationNotes: document.getElementById('prop-doc-notes')?.value?.trim() ?? '',
+      });
+      setPropDocEdit(null);
+      showToast('Property document updated');
+    } catch (err) {
+      showToast(err.message || 'Update failed');
+    }
+  };
+
+  const handleDeletePropertyDocument = async (row) => {
+    if (!window.confirm(`Delete property document for "${row.propertyName}"?`)) return;
+    try {
+      await deletePropertyDocument(row._id || row.id);
+      showToast('Property document deleted');
+    } catch (err) {
+      showToast(err.message || 'Delete failed');
     }
   };
 
@@ -1266,6 +1301,7 @@ export default function AppDashboard() {
                         <th>Permits</th>
                         <th>Lease</th>
                         <th>Notes</th>
+                        <th style={{ width: 100 }}>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1279,6 +1315,10 @@ export default function AppDashboard() {
                           <td>{row.permitsDescription}</td>
                           <td>{row.leaseAgreementDescription}</td>
                           <td>{row.fileLocationNotes}</td>
+                          <td>
+                            <button type="button" className="btn btn-outline btn-sm" style={{ marginRight: 4 }} onClick={() => setPropDocEdit(row)}>Edit</button>
+                            <button type="button" className="btn btn-outline btn-sm" onClick={() => handleDeletePropertyDocument(row)}>Delete</button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -1288,6 +1328,61 @@ export default function AppDashboard() {
             </>
           )}
         </div>
+
+        {/* ════ EDIT PROPERTY DOCUMENT MODAL ════ */}
+        {propDocEdit && (
+          <div style={S.mbg} onClick={() => setPropDocEdit(null)}>
+            <div className="modal" style={{ maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+              <div className="mhd">
+                <button type="button" className="mx" onClick={() => setPropDocEdit(null)}>×</button>
+                <div className="mtitle">Edit property document</div>
+                <div className="msub">{propDocEdit.propertyName || '—'}</div>
+              </div>
+              <form onSubmit={handleSavePropertyDocument}>
+                <div className="mbody">
+                  <div className="mgrid">
+                    <div>
+                      <label className="ml" htmlFor="prop-doc-propertyName">Property name</label>
+                      <input className="mi" id="prop-doc-propertyName" defaultValue={propDocEdit.propertyName} placeholder="e.g. Breach" />
+                    </div>
+                    <div>
+                      <label className="ml" htmlFor="prop-doc-propertyUse">Property use</label>
+                      <input className="mi" id="prop-doc-propertyUse" defaultValue={propDocEdit.propertyUse} placeholder="e.g. US Embassy" />
+                    </div>
+                    <div className="full">
+                      <label className="ml" htmlFor="prop-doc-titleDeedsPhysical">Title deeds (physical location)</label>
+                      <input className="mi" id="prop-doc-titleDeedsPhysical" defaultValue={propDocEdit.titleDeedsPhysicalLocation} placeholder="e.g. K Safe" />
+                    </div>
+                    <div className="full">
+                      <label className="ml" htmlFor="prop-doc-titleDeedsDigital">Title deeds (digital description)</label>
+                      <input className="mi" id="prop-doc-titleDeedsDigital" defaultValue={propDocEdit.titleDeedsDigitalDescription} placeholder="e.g. Renia/Mako" />
+                    </div>
+                    <div>
+                      <label className="ml" htmlFor="prop-doc-plans">Plans</label>
+                      <input className="mi" id="prop-doc-plans" defaultValue={propDocEdit.plansDescription} />
+                    </div>
+                    <div>
+                      <label className="ml" htmlFor="prop-doc-permits">Permits</label>
+                      <input className="mi" id="prop-doc-permits" defaultValue={propDocEdit.permitsDescription} />
+                    </div>
+                    <div className="full">
+                      <label className="ml" htmlFor="prop-doc-lease">Lease agreement</label>
+                      <input className="mi" id="prop-doc-lease" defaultValue={propDocEdit.leaseAgreementDescription} />
+                    </div>
+                    <div className="full">
+                      <label className="ml" htmlFor="prop-doc-notes">File location notes</label>
+                      <input className="mi" id="prop-doc-notes" defaultValue={propDocEdit.fileLocationNotes} placeholder="Where physical & online copies are kept" />
+                    </div>
+                  </div>
+                </div>
+                <div className="mfoot">
+                  <button type="button" className="btn btn-outline" onClick={() => setPropDocEdit(null)}>Cancel</button>
+                  <button type="submit" className="btn btn-maroon">Save changes</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
         {/* ════ ADD PROPERTY MODAL (white bg, all fields) ════ */}
         {modalOpen && (

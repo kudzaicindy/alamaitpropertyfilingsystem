@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react()],
   base: '/',
   optimizeDeps: {
+    include: ['react', 'react-dom', 'react/jsx-runtime', 'react-router-dom'],
     exclude: ['lucide-react'],
   },
   server: {
@@ -31,12 +32,8 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: true,
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom', 'react-router-dom'],
-        },
-      },
+    commonjsOptions: {
+      transformMixedEsModules: true,
     },
   },
 });
