@@ -7,11 +7,11 @@ const propertyRoutes = require('./routes/properties');
 
 const app = express();
 
-// CORS configuration
+// CORS configuration – allow frontend origin (localhost in dev, FRONTEND_URL in prod)
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
+  origin: process.env.NODE_ENV === 'production'
     ? [process.env.FRONTEND_URL]
-    : 'https://propertyfiling-backendnode.onrender.com',
+    : ['http://localhost:5173', 'http://127.0.0.1:5173'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   exposedHeaders: ['Authorization'],
