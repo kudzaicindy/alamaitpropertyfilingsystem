@@ -4,6 +4,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { usePropertyData } from '../../hooks/usePropertyData';
 import { useInsuranceData } from '../../hooks/useInsuranceData';
 import { useDocuments } from '../../hooks/useDocuments';
+import { usePropertyDocuments } from '../../hooks/usePropertyDocuments';
 
 /* ─── helpers ─────────────────────────────────────────────────── */
 const fmt = (n) =>
@@ -334,6 +335,10 @@ export default function AppDashboard() {
     getDocument,
     refreshDocuments,
   } = useDocuments(properties);
+  const {
+    propertyDocuments,
+    isLoading: propDocsLoading,
+  } = usePropertyDocuments();
 
   const [page, setPage] = useState('dashboard');
   const [search, setSearch] = useState('');
@@ -1235,6 +1240,50 @@ export default function AppDashboard() {
                     </div>
                   );
                 })}
+              </div>
+
+              <div className="pg-hd" style={{ marginTop: 32 }}>
+                <div>
+                  <div className="pg-eyebrow">Register</div>
+                  <div className="pg-title" style={{ fontSize: 18 }}>Property document summary</div>
+                </div>
+              </div>
+
+              <div className="tw" style={{ marginTop: 8 }}>
+                {propDocsLoading ? (
+                  <div style={{ fontSize: 13, color: 'var(--muted)', padding: '8px 0' }}>Loading property documents…</div>
+                ) : !propertyDocuments.length ? (
+                  <div style={{ fontSize: 13, color: 'var(--muted)', padding: '8px 0' }}>No property document register data found.</div>
+                ) : (
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Property</th>
+                        <th>Use</th>
+                        <th>Title Deeds (Physical)</th>
+                        <th>Title Deeds (Digital)</th>
+                        <th>Plans</th>
+                        <th>Permits</th>
+                        <th>Lease</th>
+                        <th>Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {propertyDocuments.map((row) => (
+                        <tr key={row._id || row.id}>
+                          <td>{row.propertyName}</td>
+                          <td>{row.propertyUse}</td>
+                          <td>{row.titleDeedsPhysicalLocation}</td>
+                          <td>{row.titleDeedsDigitalDescription}</td>
+                          <td>{row.plansDescription}</td>
+                          <td>{row.permitsDescription}</td>
+                          <td>{row.leaseAgreementDescription}</td>
+                          <td>{row.fileLocationNotes}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
             </>
           )}
