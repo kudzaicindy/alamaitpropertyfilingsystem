@@ -9,16 +9,17 @@ function reactCjsFix() {
     name: 'react-cjs-fix',
     resolveId(id) {
       const r = (p) => path.resolve(root, 'node_modules', p);
-      if (id === 'react' || id.includes('react.production.min.js') || id.includes('react.development.js')) {
+      // Only fix CJS-style ids that break the build; leave bare 'react'/'react-dom' to normal resolution
+      if (id.includes('react.production.min.js') || id.includes('react.development.js')) {
         return r('react/index.js');
       }
-      if (id === 'react-dom' || id.includes('react-dom.production.min.js') || id.includes('react-dom.development.js')) {
+      if (id.includes('react-dom.production.min.js') || id.includes('react-dom.development.js')) {
         return r('react-dom/index.js');
       }
-      if (id === 'react/jsx-runtime' || id.includes('react-jsx-runtime')) {
+      if (id.includes('react-jsx-runtime')) {
         return r('react/jsx-runtime.js');
       }
-      if (id === 'react/jsx-dev-runtime' || id.includes('react-jsx-dev-runtime')) {
+      if (id.includes('react-jsx-dev-runtime')) {
         return r('react/jsx-dev-runtime.js');
       }
       return null;
