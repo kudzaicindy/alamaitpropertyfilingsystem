@@ -20,10 +20,12 @@ function getReactCjsPaths() {
   return {
     reactProd: tryResolve('react/cjs/react.production.min.js'),
     reactDev: tryResolve('react/cjs/react.development.js') ?? path.join(nm, 'react/cjs/react.development.js'),
+    reactIndex: path.join(nm, 'react/index.js'),
     reactJsxProd: tryResolve('react/cjs/react-jsx-runtime.production.min.js'),
     reactJsxDev: tryResolve('react/cjs/react-jsx-runtime.development.js') ?? path.join(nm, 'react/cjs/react-jsx-runtime.development.js'),
     reactDomProd: tryResolve('react-dom/cjs/react-dom.production.min.js'),
     reactDomDev: tryResolve('react-dom/cjs/react-dom.development.js') ?? path.join(nm, 'react-dom/cjs/react-dom.development.js'),
+    reactDomIndex: path.join(nm, 'react-dom/index.js'),
   };
 }
 
@@ -103,7 +105,15 @@ export default defineConfig({
     },
     rollupOptions: {
       output: {
-        inlineDynamicImports: true,
+        // Single React chunk so createContext works everywhere (fixes react-router chunk error)
+        manualChunks(id) {
+          if (id.includes('node_modules/react/') && !id.includes('react-router')) {
+            return 'react';
+          }
+          if (id.includes('node_modules/react-dom/')) {
+            return 'react';
+          }
+        },
       },
     },
   },
