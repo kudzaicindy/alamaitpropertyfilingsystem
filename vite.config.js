@@ -41,9 +41,17 @@ function resolveReactCjsToEsm() {
     name: 'resolve-react-cjs-to-esm',
     enforce: 'pre',
     resolveId(id: string, importer?: string) {
+      if (id === 'react-router') {
+        try {
+          return require.resolve('react-router/dist/index.js');
+        } catch {
+          return path.join(__dirname, 'node_modules/react-router/dist/index.js');
+        }
+      }
       const rawId = id.replace(/\?.*$/, '').replace(/^\.\//, '');
-      const fromReact = importer != null && (importer.includes('react' + path.sep) || importer.includes('react/'));
-      const fromReactDom = importer != null && (importer.includes('react-dom' + path.sep) || importer.includes('react-dom/'));
+      // Only match when importer is inside "react" or "react-dom" package (not react-router)
+      const fromReact = importer != null && /[\\/]react[\\/]/.test(importer) && !importer.includes('react-router');
+      const fromReactDom = importer != null && /[\\/]react-dom[\\/]/.test(importer);
 
       if (fromReact && rawId.includes('react-jsx-runtime.production.min.js')) return cjsPaths.reactJsxProd ?? cjsPaths.reactJsxDev;
       if (fromReact && rawId.includes('react-jsx-runtime.development')) return cjsPaths.reactJsxDev;
@@ -73,9 +81,10 @@ export default defineConfig({
   base: '/',
   resolve: {
     dedupe: ['react', 'react-dom', 'react/jsx-runtime'],
+    mainFields: ['module', 'main'],
   },
   optimizeDeps: {
-    include: ['react', 'react-dom', 'react/jsx-runtime', 'react-router-dom', 'lucide-react'],
+    include: ['react', 'react-dom', 'react/jsx-runtime', 'react-router', 'react-router-dom', 'lucide-react'],
   },
   server: {
     proxy: {
