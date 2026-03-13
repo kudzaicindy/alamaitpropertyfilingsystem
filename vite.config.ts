@@ -1,19 +1,25 @@
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(process.cwd());
 
 function reactCjsFix() {
   return {
     name: 'react-cjs-fix',
     resolveId(id) {
-      if (id.includes('react.production.min.js')) {
-        return path.resolve(__dirname, 'node_modules/react/index.js');
+      const r = (p) => path.resolve(root, 'node_modules', p);
+      if (id === 'react' || id.includes('react.production.min.js') || id.includes('react.development.js')) {
+        return r('react/index.js');
       }
-      if (id.includes('react-jsx-runtime.production.min.js')) {
-        return path.resolve(__dirname, 'node_modules/react/jsx-runtime.js');
+      if (id === 'react-dom' || id.includes('react-dom.production.min.js') || id.includes('react-dom.development.js')) {
+        return r('react-dom/index.js');
+      }
+      if (id === 'react/jsx-runtime' || id.includes('react-jsx-runtime')) {
+        return r('react/jsx-runtime.js');
+      }
+      if (id === 'react/jsx-dev-runtime' || id.includes('react-jsx-dev-runtime')) {
+        return r('react/jsx-dev-runtime.js');
       }
       return null;
     },
@@ -27,15 +33,14 @@ export default defineConfig({
   resolve: {
     dedupe: ['react', 'react-dom', 'react/jsx-runtime'],
     alias: {
-      // Force ESM builds so Rollup never resolves CJS (avoids commonjs-external resolution bug)
-      'react/jsx-runtime': path.resolve(__dirname, 'node_modules/react/jsx-runtime.js'),
-      'react/jsx-dev-runtime': path.resolve(__dirname, 'node_modules/react/jsx-dev-runtime.js'),
-      'react/cjs/react.production.min.js': path.resolve(__dirname, 'node_modules/react/index.js'),
-      'react/cjs/react.development.js': path.resolve(__dirname, 'node_modules/react/index.js'),
-      'react/cjs/react-jsx-runtime.production.min.js': path.resolve(__dirname, 'node_modules/react/jsx-runtime.js'),
-      'react/cjs/react-jsx-runtime.development.js': path.resolve(__dirname, 'node_modules/react/jsx-dev-runtime.js'),
-      'react-dom/cjs/react-dom.production.min.js': path.resolve(__dirname, 'node_modules/react-dom/index.js'),
-      'react-dom/cjs/react-dom.development.js': path.resolve(__dirname, 'node_modules/react-dom/index.js'),
+      'react/jsx-runtime': path.resolve(root, 'node_modules/react/jsx-runtime.js'),
+      'react/jsx-dev-runtime': path.resolve(root, 'node_modules/react/jsx-dev-runtime.js'),
+      'react/cjs/react.production.min.js': path.resolve(root, 'node_modules/react/index.js'),
+      'react/cjs/react.development.js': path.resolve(root, 'node_modules/react/index.js'),
+      'react/cjs/react-jsx-runtime.production.min.js': path.resolve(root, 'node_modules/react/jsx-runtime.js'),
+      'react/cjs/react-jsx-runtime.development.js': path.resolve(root, 'node_modules/react/jsx-dev-runtime.js'),
+      'react-dom/cjs/react-dom.production.min.js': path.resolve(root, 'node_modules/react-dom/index.js'),
+      'react-dom/cjs/react-dom.development.js': path.resolve(root, 'node_modules/react-dom/index.js'),
     },
   },
   optimizeDeps: {
