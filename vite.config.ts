@@ -1,30 +1,65 @@
 import path from 'path';
+import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 
-// Fix Vercel build: Rollup resolves react to CJS and marks them ?commonjs-external with a relative
-// path that fails. Resolve those ids to the actual CJS implementation files so they get bundled
-// (single React instance with createContext etc.).
+// Resolve paths to React/ReactDOM CJS files (use dev when production.min is missing, e.g. on Vercel).
+function getReactCjsPaths() {
+  const nm = path.join(__dirname, 'node_modules');
+  const tryResolve = (p: string): string | null => {
+    try {
+      return require.resolve(p);
+    } catch {
+      return null;
+    }
+  };
+  return {
+    reactProd: tryResolve('react/cjs/react.production.min.js'),
+    reactDev: tryResolve('react/cjs/react.development.js') ?? path.join(nm, 'react/cjs/react.development.js'),
+    reactJsxProd: tryResolve('react/cjs/react-jsx-runtime.production.min.js'),
+    reactJsxDev: tryResolve('react/cjs/react-jsx-runtime.development.js') ?? path.join(nm, 'react/cjs/react-jsx-runtime.development.js'),
+    reactDomProd: tryResolve('react-dom/cjs/react-dom.production.min.js'),
+    reactDomDev: tryResolve('react-dom/cjs/react-dom.development.js') ?? path.join(nm, 'react-dom/cjs/react-dom.development.js'),
+  };
+}
+
+const cjsPaths = getReactCjsPaths();
+
+/**
+ * Fix Vercel build: when react/index.js or react/jsx-runtime.js require() a production CJS file
+ * that doesn't exist (ENOENT), resolve that request to the development CJS file instead.
+ * We do NOT alias 'react' itself so the commonjs plugin can transform the wrapper normally.
+ */
 function resolveReactCjsToEsm() {
-  const isProd = process.env.NODE_ENV !== 'development';
-  const reactCjs = path.resolve(__dirname, `node_modules/react/cjs/react.${isProd ? 'production.min' : 'development'}.js`);
-  const reactJsxRuntimeCjs = path.resolve(__dirname, `node_modules/react/cjs/react-jsx-runtime.${isProd ? 'production.min' : 'development'}.js`);
-  const reactJsxDevRuntimeCjs = path.resolve(__dirname, 'node_modules/react/cjs/react-jsx-dev-runtime.development.js');
-  const reactDomCjs = path.resolve(__dirname, `node_modules/react-dom/cjs/react-dom.${isProd ? 'production.min' : 'development'}.js`);
-  const reactDomClient = path.resolve(__dirname, 'node_modules/react-dom/client.js');
   return {
     name: 'resolve-react-cjs-to-esm',
-    enforce: 'post',
-    resolveId(id: string) {
+    enforce: 'pre',
+    resolveId(id: string, importer?: string) {
       const rawId = id.replace(/\?.*$/, '').replace(/^\.\//, '');
-      if (rawId.includes('react-jsx-runtime.production.min.js')) return reactJsxRuntimeCjs;
-      if (rawId.includes('react-jsx-runtime.development')) return reactJsxDevRuntimeCjs;
-      if (rawId.includes('react.production.min.js') || rawId.includes('react.development.js')) return reactCjs;
-      if (rawId.includes('react-dom.production.min.js') || rawId.includes('react-dom.development.js')) return reactDomCjs;
-      if (rawId.includes('react-dom-client')) return reactDomClient;
+      const fromReact = importer != null && (importer.includes('react' + path.sep) || importer.includes('react/'));
+      const fromReactDom = importer != null && (importer.includes('react-dom' + path.sep) || importer.includes('react-dom/'));
+
+      if (fromReact && rawId.includes('react-jsx-runtime.production.min.js')) return cjsPaths.reactJsxProd ?? cjsPaths.reactJsxDev;
+      if (fromReact && rawId.includes('react-jsx-runtime.development')) return cjsPaths.reactJsxDev;
+      if (fromReact && rawId.includes('react.production.min.js')) return cjsPaths.reactProd ?? cjsPaths.reactDev;
+      if (fromReact && rawId.includes('react.development.js')) return cjsPaths.reactDev;
+
+      if (fromReactDom && rawId.includes('react-dom.production.min.js')) return cjsPaths.reactDomProd ?? cjsPaths.reactDomDev;
+      if (fromReactDom && rawId.includes('react-dom.development.js')) return cjsPaths.reactDomDev;
+
+      // Fix broken commonjs-external ids (relative path that fails on Vercel)
+      if (id.includes('commonjs-external')) {
+        if (rawId.includes('react-jsx-runtime.production.min.js')) return cjsPaths.reactJsxProd ?? cjsPaths.reactJsxDev;
+        if (rawId.includes('react-jsx-runtime.development')) return cjsPaths.reactJsxDev;
+        if (rawId.includes('react.production.min.js')) return cjsPaths.reactProd ?? cjsPaths.reactDev;
+        if (rawId.includes('react.development.js') && !rawId.includes('react-dom')) return cjsPaths.reactDev;
+        if (rawId.includes('react-dom.production.min.js')) return cjsPaths.reactDomProd ?? cjsPaths.reactDomDev;
+        if (rawId.includes('react-dom.development.js')) return cjsPaths.reactDomDev;
+      }
       return null;
     },
   };
@@ -36,9 +71,6 @@ export default defineConfig({
   base: '/',
   resolve: {
     dedupe: ['react', 'react-dom', 'react/jsx-runtime'],
-    alias: {
-      // More specific first so subpaths don’t get matched as main package + path
-    },
   },
   optimizeDeps: {
     include: ['react', 'react-dom', 'react/jsx-runtime', 'react-router-dom', 'lucide-react'],
