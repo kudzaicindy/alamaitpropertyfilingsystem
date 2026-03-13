@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 // Resolve paths to React/ReactDOM CJS files (use dev when production.min is missing, e.g. on Vercel).
 function getReactCjsPaths() {
   const nm = path.join(__dirname, 'node_modules');
-  const tryResolve = (p: string): string | null => {
+  const tryResolve = (p) => {
     try {
       return require.resolve(p);
     } catch {
@@ -40,7 +40,7 @@ function resolveReactCjsToEsm() {
   return {
     name: 'resolve-react-cjs-to-esm',
     enforce: 'pre',
-    resolveId(id: string, importer?: string) {
+    resolveId(id, importer) {
       if (id === 'react-router') {
         try {
           return require.resolve('react-router/dist/index.js');
