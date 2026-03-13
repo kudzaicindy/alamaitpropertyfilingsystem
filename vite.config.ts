@@ -5,9 +5,24 @@ import react from '@vitejs/plugin-react';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+function reactCjsFix() {
+  return {
+    name: 'react-cjs-fix',
+    resolveId(id) {
+      if (id.includes('react.production.min.js')) {
+        return 'react';
+      }
+      if (id.includes('react-jsx-runtime.production.min.js')) {
+        return 'react/jsx-runtime';
+      }
+      return null;
+    },
+  };
+}
+
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), reactCjsFix()],
   base: '/',
   resolve: {
     dedupe: ['react', 'react-dom', 'react/jsx-runtime'],

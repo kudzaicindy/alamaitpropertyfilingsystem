@@ -325,7 +325,7 @@ function HoverCard({ children, onClick, style }) {
 /* ─── main component ──────────────────────────────────────────── */
 export default function AppDashboard() {
   const { logout, user } = useAuth();
-  const { properties, isLoading: propLoading, addProperty } = usePropertyData();
+  const { properties, isLoading: propLoading, addProperty, updateProperty } = usePropertyData();
   const { propertyInsurance, vehicleInsurance, assetInsurance, insuredCover, isLoading: insLoading } = useInsuranceData();
   const {
     documents: documentsList,
@@ -361,8 +361,10 @@ export default function AppDashboard() {
   const [detailProp, setDetailProp] = useState(null);
   const [selectedDoc, setSelectedDoc] = useState(null);
   const [docDetail, setDocDetail] = useState(null); // full doc with digitalFileUrl when viewing
+  const [docEditFile, setDocEditFile] = useState(null); // file chosen in edit modal
   const [propDocEdit, setPropDocEdit] = useState(null); // property document row being edited
   const [toast, setToast] = useState('');
+  const [detailSaving, setDetailSaving] = useState(false);
 
   const totalVal = properties.reduce((s, p) => s + (p.estimatedCurrentValue || 0), 0);
   const totalInv = properties.reduce((s, p) => s + (p.totalPurchaseAmount || 0), 0);
@@ -416,6 +418,7 @@ export default function AppDashboard() {
   useEffect(() => {
     if (!selectedDoc) {
       setDocDetail(null);
+      setDocEditFile(null);
       return;
     }
     let cancelled = false;
@@ -464,6 +467,32 @@ export default function AppDashboard() {
       document.getElementById('doc-upload-form')?.reset();
     } catch (err) {
       showToast(err.message || 'Failed to save document');
+    } finally {
+      setDocUploading(false);
+    }
+  };
+
+  const handleDocEditUpload = async (e) => {
+    e.preventDefault();
+    if (!selectedDoc || !docEditFile) {
+      showToast('Choose a file first');
+      return;
+    }
+    const doc = docDetail || selectedDoc;
+    setDocUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', docEditFile);
+      formData.append('title', doc.name || 'Document');
+      if (doc.category) formData.append('documentType', doc.category);
+      if (doc.referenceType) formData.append('referenceType', doc.referenceType);
+      if (doc.referenceId) formData.append('referenceId', doc.referenceId);
+      await uploadDocument(formData);
+      await refreshDocuments();
+      showToast('Digital copy uploaded');
+      setDocEditFile(null);
+    } catch (err) {
+      showToast(err.message || 'Failed to upload digital copy');
     } finally {
       setDocUploading(false);
     }
@@ -1218,63 +1247,71 @@ export default function AppDashboard() {
                   <div className="ddate" style={{ marginTop: 3 }}>Digital copy + physical location</div>
                 </div>
 
-                {(docCategory === 'all'
-                  ? documentsList
-                  : documentsList.filter((d) => d.category === docCategory)
-                )
-                  .filter((doc) => {
+                {(propertyDocuments || [])
+                  .filter((row) => {
                     const q = (docSearch || '').toLowerCase();
                     if (!q) return true;
-                    return [doc.name, doc.propertyName, doc.category, doc.physicalLocation, doc.digitalFileName]
-                      .some(v => String(v || '').toLowerCase().includes(q));
+                    return [
+                      row.propertyName,
+                      row.propertyUse,
+                      row.titleDeedsPhysicalLocation,
+                      row.titleDeedsDigitalDescription,
+                      row.fileLocationNotes,
+                    ].some(v => String(v || '').toLowerCase().includes(q));
                   })
-                  .map((doc) => {
-                  const hasDigital = doc.hasDigitalCopy;
-                  const categoryLabel = DOCUMENT_CATEGORIES.find((c) => c.id === doc.category)?.label || doc.category;
-                  return (
-                    <div
-                      key={doc.id}
-                      style={{
-                        background: '#fff',
-                        border: '1px solid var(--border)',
-                        borderTop: '3px solid ' + (hasDigital ? 'var(--green)' : '#e0e4e8'),
-                        borderRadius: 0,
-                        padding: '12px 14px',
-                        boxShadow: 'var(--shadow-sm)',
-                        cursor: 'pointer',
-                      }}
-                      onClick={() => setSelectedDoc(doc)}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                        <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--muted)' }}>
-                          {doc.id} • {categoryLabel}
+                  .map((row, idx) => {
+                    const hasPhysical = !!row.titleDeedsPhysicalLocation;
+                    const hasDigital = !!row.titleDeedsDigitalDescription;
+                    return (
+                      <div
+                        key={row._id || row.id || idx}
+                        style={{
+                          background: '#fff',
+                          border: '1px solid var(--border)',
+                          borderTop: '3px solid ' + (hasDigital ? 'var(--green)' : '#e0e4e8'),
+                          borderRadius: 0,
+                          padding: '12px 14px',
+                          boxShadow: 'var(--shadow-sm)',
+                          cursor: 'pointer',
+                        }}
+                        onClick={() => setPropDocEdit(row)}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--muted)' }}>
+                            {row.propertyName || '—'} • {row.propertyUse || '—'}
+                          </div>
+                          <div style={{ fontSize: 12 }}>
+                            <span className={hasDigital ? 'ins-y' : 'ins-n'}>{hasDigital ? '✓ Digital' : '✗ No digital'}</span>
+                          </div>
                         </div>
-                        <div style={{ fontSize: 12 }}>
-                          <span className={hasDigital ? 'ins-y' : 'ins-n'}>{hasDigital ? '✓ Digital' : '✗ No digital'}</span>
+                        <div className="tdname" style={{ marginBottom: 10 }}>
+                          {row.titleDeedsDigitalDescription || row.titleDeedsPhysicalLocation || 'Title deeds & filing'}
+                        </div>
+                        <div style={{ marginTop: 10, borderTop: '1px solid #e0e4e8', paddingTop: 10, fontSize: 12 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #e0e4e8' }}>
+                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Title deeds (physical)</span>
+                            <span style={{ textAlign: 'right', maxWidth: '60%' }}>{row.titleDeedsPhysicalLocation || '—'}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #e0e4e8' }}>
+                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Title deeds (digital)</span>
+                            <span style={{ textAlign: 'right', maxWidth: '60%' }}>{row.titleDeedsDigitalDescription || '—'}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #e0e4e8' }}>
+                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Plans / Permits</span>
+                            <span style={{ textAlign: 'right', maxWidth: '60%' }}>
+                              {row.plansDescription || '—'}{row.plansDescription && row.permitsDescription ? ' · ' : ''}{row.permitsDescription || ''}
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0' }}>
+                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Lease / Notes</span>
+                            <span style={{ textAlign: 'right', maxWidth: '60%' }}>
+                              {row.leaseAgreementDescription || '—'}{row.leaseAgreementDescription && row.fileLocationNotes ? ' · ' : ''}{row.fileLocationNotes || ''}
+                            </span>
+                          </div>
                         </div>
                       </div>
-                      <div className="tdname" style={{ marginBottom: 10 }}>{doc.name}</div>
-                      <div style={{ marginTop: 10, borderTop: '1px solid #e0e4e8', paddingTop: 10, fontSize: 12 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #e0e4e8' }}>
-                          <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Property</span>
-                          <span>{doc.propertyName || '—'}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #e0e4e8' }}>
-                          <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Date</span>
-                          <span>{doc.date || '—'}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #e0e4e8' }}>
-                          <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Digital</span>
-                          <span>{doc.hasDigitalCopy ? (doc.digitalFileName || 'Yes') : '—'}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0' }}>
-                          <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Physical location</span>
-                          <span style={{ textAlign: 'right', maxWidth: '60%' }}>{doc.hasPhysicalCopy ? (doc.physicalLocation || 'Yes') : '—'}</span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
               </div>
 
               <div className="pg-hd" style={{ marginTop: 32 }}>
@@ -1491,13 +1528,36 @@ export default function AppDashboard() {
                       {doc.hasPhysicalCopy ? (doc.physicalLocation || 'Recorded') : 'No physical copy'}
                     </span>
                   </div>
+                  {!doc.hasDigitalCopy && (
+                    <div style={{ marginTop: 16 }}>
+                      <label className="ml" htmlFor="doc-edit-file">Upload digital copy</label>
+                      <input
+                        id="doc-edit-file"
+                        className="mi"
+                        type="file"
+                        accept=".pdf,image/*"
+                        onChange={e => setDocEditFile(e.target.files?.[0] || null)}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="mfoot">
                 {doc.hasDigitalCopy && doc.digitalFileUrl && (
                   <a href={doc.digitalFileUrl} target="_blank" rel="noopener noreferrer" className="btn btn-maroon" style={{ marginRight: 8 }}>View digital copy</a>
                 )}
-                <button type="button" className="btn btn-outline" onClick={() => { setSelectedDoc(null); setDocDetail(null); }}>Close</button>
+                {!doc.hasDigitalCopy && (
+                  <button
+                    type="button"
+                    className="btn btn-maroon"
+                    style={{ marginRight: 8 }}
+                    onClick={handleDocEditUpload}
+                    disabled={docUploading || !docEditFile}
+                  >
+                    {docUploading ? 'Uploading…' : 'Save digital copy'}
+                  </button>
+                )}
+                <button type="button" className="btn btn-outline" onClick={() => { setSelectedDoc(null); setDocDetail(null); setDocEditFile(null); }}>Close</button>
               </div>
             </div>
           </div>
@@ -1584,19 +1644,24 @@ export default function AppDashboard() {
                   <div className="sp-grid">
                     <div>
                       <div className="sp-key">Type</div>
-                      <div className="sp-val"><span className={`badge ${badgeClass(detailProp.propertyType)}`}>{detailProp.propertyType}</span></div>
+                      <select id="sp-type" className="ms" defaultValue={detailProp.propertyType || 'House'}>
+                        {Object.keys(TYPE_META).map(t => <option key={t} value={t}>{t}</option>)}
+                      </select>
                     </div>
                     <div>
                       <div className="sp-key">Entity</div>
-                      <div className="sp-val">{detailProp.ownedEntity || '—'}</div>
+                      <select id="sp-entity" className="ms" defaultValue={detailProp.ownedEntity || ''}>
+                        <option value="">—</option>
+                        {['SC', 'Alamait', 'TMT', 'Maitalan', 'VV'].map(ent => <option key={ent} value={ent}>{ent}</option>)}
+                      </select>
                     </div>
                     <div>
                       <div className="sp-key">Usage</div>
-                      <div className="sp-val">{detailProp.usage || '—'}</div>
+                      <input id="sp-usage" className="mi" defaultValue={detailProp.usage || ''} placeholder="e.g. Residential" />
                     </div>
                     <div>
                       <div className="sp-key">Purchase Date</div>
-                      <div className="sp-val">{detailProp.purchaseDate ? detailProp.purchaseDate.slice(0, 7) : '—'}</div>
+                      <input id="sp-purchaseDate" type="month" className="mi" defaultValue={detailProp.purchaseDate ? detailProp.purchaseDate.slice(0,7) : ''} />
                     </div>
                   </div>
                 </div>
@@ -1605,11 +1670,11 @@ export default function AppDashboard() {
                   <div className="sp-grid">
                     <div>
                       <div className="sp-key">Purchase Price</div>
-                      <div className="sp-val mn">{fmt(detailProp.totalPurchaseAmount)}</div>
+                      <input id="sp-price" type="number" className="mi" defaultValue={detailProp.totalPurchaseAmount || 0} min="0" />
                     </div>
                     <div>
                       <div className="sp-key">Fees</div>
-                      <div className="sp-val mn">{fmt(detailProp.purchaseFees)}</div>
+                      <input id="sp-fees" type="number" className="mi" defaultValue={detailProp.purchaseFees || 0} min="0" />
                     </div>
                     <div>
                       <div className="sp-key">Total Acquisition</div>
@@ -1617,15 +1682,15 @@ export default function AppDashboard() {
                     </div>
                     <div>
                       <div className="sp-key">Est. Current Value</div>
-                      <div className="sp-val mn" style={{ color: 'var(--green)' }}>{fmt(detailProp.estimatedCurrentValue)}</div>
+                      <input id="sp-value" type="number" className="mi" defaultValue={detailProp.estimatedCurrentValue || 0} min="0" />
                     </div>
                     <div>
                       <div className="sp-key">Investment Req.</div>
-                      <div className="sp-val mn">{detailProp.investmentRequired ? fmt(detailProp.investmentRequired) : '—'}</div>
+                      <input id="sp-investment" type="number" className="mi" defaultValue={detailProp.investmentRequired || ''} min="0" />
                     </div>
                     <div>
                       <div className="sp-key">Potential Income/mo</div>
-                      <div className="sp-val mn">{detailProp.potentialIncome ? fmt(detailProp.potentialIncome) : '—'}</div>
+                      <input id="sp-income" type="number" className="mi" defaultValue={detailProp.potentialIncome || ''} min="0" />
                     </div>
                   </div>
                 </div>
@@ -1634,44 +1699,47 @@ export default function AppDashboard() {
                   <div className="sp-grid">
                     <div>
                       <div className="sp-key">Status</div>
-                      <div className="sp-val"><span className={detailProp.insured ? 'ins-y' : 'ins-n'}>{detailProp.insured ? '✓ Insured' : '✗ Not Insured'}</span></div>
+                      <select id="sp-insured" className="ms" defaultValue={detailProp.insured ? 'yes' : 'no'}>
+                        <option value="yes">Insured</option>
+                        <option value="no">Not insured</option>
+                      </select>
                     </div>
                     <div>
                       <div className="sp-key">Insurer</div>
-                      <div className="sp-val">{detailProp.insurer || '—'}</div>
+                      <input id="sp-insurer" className="mi" defaultValue={detailProp.insurer || ''} />
                     </div>
                     <div>
                       <div className="sp-key">Termly Premium</div>
-                      <div className="sp-val mn">{detailProp.termlyPremium ? fmt(detailProp.termlyPremium) : '—'}</div>
+                      <input id="sp-premium" type="number" className="mi" defaultValue={detailProp.termlyPremium || ''} min="0" />
                     </div>
                     <div>
                       <div className="sp-key">Sum Insured</div>
-                      <div className="sp-val mn">{detailProp.sumInsured ? fmt(detailProp.sumInsured) : '—'}</div>
+                      <input id="sp-sum" type="number" className="mi" defaultValue={detailProp.sumInsured || ''} min="0" />
                     </div>
                     <div>
                       <div className="sp-key">Next Payment</div>
-                      <div className="sp-val">{detailProp.nextPayment || '—'}</div>
+                      <input id="sp-next" type="date" className="mi" defaultValue={detailProp.nextPayment || ''} />
                     </div>
                   </div>
                 </div>
                 <div className="sp-sec">
                   <div className="sp-sec-t">Documents</div>
                   {(() => {
-                    const docsForProp = documentsList.filter(d => d.referenceType === 'property' && String(d.referenceId) === String(detailProp.id));
+                    const docsForProp = propertyDocuments.filter(row => row.propertyName === detailProp.name);
                     if (!docsForProp.length) {
                       return <div style={{ fontSize: 12, color: 'var(--muted)' }}>No documents linked to this property yet.</div>;
                     }
                     return (
                       <div style={{ fontSize: 12 }}>
                         <div style={{ marginBottom: 6 }}>
-                          <strong>{docsForProp.length}</strong> document{docsForProp.length > 1 ? 's' : ''} on file
+                          <strong>{docsForProp.length}</strong> row{docsForProp.length > 1 ? 's' : ''} in property document register
                         </div>
                         <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          {docsForProp.slice(0, 4).map(d => (
-                            <li key={d.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                              <span>{d.name}</span>
-                              <span style={{ fontSize: 11, color: 'var(--muted)' }}>
-                                {d.hasDigitalCopy ? 'Digital' : 'No digital'} · {d.hasPhysicalCopy ? 'Physical' : 'No physical'}
+                          {docsForProp.slice(0, 4).map((d, idx) => (
+                            <li key={d._id || d.id || idx} style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                              <span>{d.propertyName}</span>
+                              <span style={{ fontSize: 11, color: 'var(--muted)', textAlign: 'right' }}>
+                                {d.titleDeedsPhysicalLocation ? 'Physical deeds' : 'No physical'} · {d.titleDeedsDigitalDescription ? 'Digital' : 'No digital'}
                               </span>
                             </li>
                           ))}
@@ -1686,7 +1754,45 @@ export default function AppDashboard() {
                   })()}
                 </div>
                 <div className="sp-acts">
-                  <button type="button" className="btn btn-navy btn-sm" onClick={() => showToast('Edit — coming soon')}>Edit</button>
+                  <button
+                    type="button"
+                    className="btn btn-navy btn-sm"
+                    disabled={detailSaving}
+                    onClick={async () => {
+                      if (!detailProp) return;
+                      try {
+                        setDetailSaving(true);
+                        const price = Number(document.getElementById('sp-price')?.value) || 0;
+                        const fees = Number(document.getElementById('sp-fees')?.value) || 0;
+                        await updateProperty(detailProp.id, {
+                          name: detailProp.name,
+                          address: detailProp.address,
+                          propertyType: document.getElementById('sp-type')?.value || detailProp.propertyType,
+                          ownedEntity: document.getElementById('sp-entity')?.value || '',
+                          usage: document.getElementById('sp-usage')?.value || '',
+                          purchaseDate: document.getElementById('sp-purchaseDate')?.value || '',
+                          purchasePrice: price,
+                          purchaseFees: fees,
+                          totalPurchaseAmount: price,
+                          estimatedCurrentValue: Number(document.getElementById('sp-value')?.value) || 0,
+                          investmentRequired: Number(document.getElementById('sp-investment')?.value) || 0,
+                          potentialIncome: Number(document.getElementById('sp-income')?.value) || 0,
+                          insured: (document.getElementById('sp-insured')?.value || 'no') === 'yes',
+                          insurer: document.getElementById('sp-insurer')?.value || '',
+                          termlyPremium: Number(document.getElementById('sp-premium')?.value) || 0,
+                          sumInsured: Number(document.getElementById('sp-sum')?.value) || 0,
+                          nextPayment: document.getElementById('sp-next')?.value || '',
+                        });
+                        showToast('Property updated');
+                      } catch (err) {
+                        showToast(err.message || 'Failed to update property');
+                      } finally {
+                        setDetailSaving(false);
+                      }
+                    }}
+                  >
+                    {detailSaving ? 'Saving…' : 'Save changes'}
+                  </button>
                   <button type="button" className="btn btn-outline btn-sm" onClick={() => { setDetailProp(null); setPage('documents'); }}>Documents</button>
                 </div>
               </div>
