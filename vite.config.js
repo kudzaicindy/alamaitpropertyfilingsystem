@@ -43,9 +43,13 @@ function resolveReactCjsToEsm() {
     resolveId(id, importer) {
       if (id === 'react-router') {
         try {
-          return require.resolve('react-router/dist/index.js');
+          return require.resolve('react-router');
         } catch {
-          return path.join(__dirname, 'node_modules/react-router/dist/index.js');
+          try {
+            return require.resolve('react-router/dist/main.js');
+          } catch {
+            return path.join(__dirname, 'node_modules/react-router/dist/main.js');
+          }
         }
       }
       const rawId = id.replace(/\?.*$/, '').replace(/^\.\//, '');
