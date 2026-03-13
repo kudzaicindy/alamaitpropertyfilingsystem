@@ -10,10 +10,10 @@ function reactCjsFix() {
     name: 'react-cjs-fix',
     resolveId(id) {
       if (id.includes('react.production.min.js')) {
-        return 'react';
+        return path.resolve(__dirname, 'node_modules/react/index.js');
       }
       if (id.includes('react-jsx-runtime.production.min.js')) {
-        return 'react/jsx-runtime';
+        return path.resolve(__dirname, 'node_modules/react/jsx-runtime.js');
       }
       return null;
     },
