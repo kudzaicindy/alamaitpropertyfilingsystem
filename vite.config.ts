@@ -105,15 +105,7 @@ export default defineConfig({
     },
     rollupOptions: {
       output: {
-        // Single React chunk so createContext works everywhere (fixes react-router chunk error)
-        manualChunks(id) {
-          if (id.includes('node_modules/react/') && !id.includes('react-router')) {
-            return 'react';
-          }
-          if (id.includes('node_modules/react-dom/')) {
-            return 'react';
-          }
-        },
+        inlineDynamicImports: true,
       },
     },
   },
