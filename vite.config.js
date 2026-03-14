@@ -41,17 +41,6 @@ function resolveReactCjsToEsm() {
     name: 'resolve-react-cjs-to-esm',
     enforce: 'pre',
     resolveId(id, importer) {
-      if (id === 'react-router') {
-        try {
-          return require.resolve('react-router');
-        } catch {
-          try {
-            return require.resolve('react-router/dist/main.js');
-          } catch {
-            return path.join(__dirname, 'node_modules/react-router/dist/main.js');
-          }
-        }
-      }
       const rawId = id.replace(/\?.*$/, '').replace(/^\.\//, '');
       // Only match when importer is inside "react" or "react-dom" package (not react-router)
       const fromReact = importer != null && /[\\/]react[\\/]/.test(importer) && !importer.includes('react-router');
@@ -86,6 +75,10 @@ export default defineConfig({
   resolve: {
     dedupe: ['react', 'react-dom', 'react/jsx-runtime'],
     mainFields: ['module', 'main'],
+    alias: {
+      // Use ESM build so we don't rely on dist/main.js (can be missing on Vercel)
+      'react-router': path.join(__dirname, 'node_modules/react-router/dist/index.js'),
+    },
   },
   optimizeDeps: {
     include: ['react', 'react-dom', 'react/jsx-runtime', 'react-router', 'react-router-dom', 'lucide-react'],
