@@ -26,6 +26,7 @@ function getReactCjsPaths() {
     reactDomProd: tryResolve('react-dom/cjs/react-dom.production.min.js'),
     reactDomDev: tryResolve('react-dom/cjs/react-dom.development.js') ?? path.join(nm, 'react-dom/cjs/react-dom.development.js'),
     reactDomIndex: path.join(nm, 'react-dom/index.js'),
+    reactDomClient: path.join(nm, 'react-dom/client.js'),
   };
 }
 
@@ -76,6 +77,12 @@ export default defineConfig({
     dedupe: ['react', 'react-dom', 'react/jsx-runtime'],
     mainFields: ['module', 'main'],
     alias: {
+      // Force a single React instance: resolve to package roots so app and react-router share one copy.
+      react: path.join(__dirname, 'node_modules/react'),
+      'react-dom': path.join(__dirname, 'node_modules/react-dom'),
+      'react/jsx-runtime': cjsPaths.reactJsxProd ?? cjsPaths.reactJsxDev,
+      'react/jsx-dev-runtime': cjsPaths.reactJsxDev,
+      'react-dom/client': cjsPaths.reactDomClient,
       // Use ESM build so we don't rely on dist/main.js (can be missing on Vercel)
       'react-router': path.join(__dirname, 'node_modules/react-router/dist/index.js'),
     },
