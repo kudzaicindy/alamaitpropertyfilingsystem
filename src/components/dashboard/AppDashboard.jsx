@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { usePropertyData } from '../../hooks/usePropertyData';
 import { useInsuranceData } from '../../hooks/useInsuranceData';
 import { useDocuments } from '../../hooks/useDocuments';
 import { usePropertyDocuments } from '../../hooks/usePropertyDocuments';
+import { useAssets } from '../../hooks/useAssets';
 
 /* ─── helpers ─────────────────────────────────────────────────── */
 const fmt = (n) =>
@@ -260,25 +261,7 @@ const S = {
   detailVal: { fontFamily: "'Playfair Display',Georgia,serif", fontSize: 22, color: 'var(--maroon-light)', fontWeight: 600 },
 };
 
-/* ─── static data for assets & documents ──────────────────────── */
-const STATIC_ASSETS = {
-  Greystone: [
-    { n: 'Diesel Generator', q: 1 },
-    { n: 'Solar System', q: 1 },
-    { n: 'Battery', q: 1 },
-    { n: 'Inverter', q: 1 },
-  ],
-  'Mason Court': [
-    { n: 'Chairs', q: 9 },
-    { n: 'Printer', q: 1 },
-    { n: 'Water Dispenser', q: 1 },
-    { n: 'Land Phone', q: 1 },
-    { n: 'Adapters (3 long)', q: 10 },
-    { n: 'Heater', q: 3 },
-    { n: 'White Board', q: 1 },
-  ],
-};
-
+/* ─── documents ────────────────────────────────────────────────── */
 const DOCUMENT_CATEGORIES = [
   { id: 'deeds', label: 'Title Deeds', icon: '📜' },
   { id: 'insurance', label: 'Insurance', icon: '🛡️' },
@@ -343,6 +326,7 @@ export default function AppDashboard() {
     updatePropertyDocument,
     deletePropertyDocument,
   } = usePropertyDocuments();
+  const { assets, isLoading: assetsLoading, addAsset: apiAddAsset, refreshAssets } = useAssets();
 
   const [page, setPage] = useState('dashboard');
   const [search, setSearch] = useState('');
@@ -357,10 +341,18 @@ export default function AppDashboard() {
   const [insSearch, setInsSearch] = useState('');
   const [insStatusFilter, setInsStatusFilter] = useState(''); // '', 'insured', 'uninsured'
   const [assetSearch, setAssetSearch] = useState('');
-  const [assetMap, setAssetMap] = useState(() => JSON.parse(JSON.stringify(STATIC_ASSETS)));
+  const assetMapFromApi = useMemo(() => {
+    const m = {};
+    (assets || []).forEach(a => {
+      const p = a.propertyName || 'Property';
+      if (!m[p]) m[p] = [];
+      m[p].push({ n: a.name, q: a.quantity ?? 1, id: a._id || a.id });
+    });
+    return m;
+  }, [assets]);
   const [assetSnapshots, setAssetSnapshots] = useState({}); // { 'YYYY-MM-DD': { propertyName: [{n,q}], ... } }
   const [assetViewDate, setAssetViewDate] = useState(null); // null = current, else snapshot date
-  const [assetKey, setAssetKey] = useState(Object.keys(STATIC_ASSETS)[0] || null);
+  const [assetKey, setAssetKey] = useState(null);
   const [assetAddOpen, setAssetAddOpen] = useState(false);
   const [assetAddProperty, setAssetAddProperty] = useState('');
   const [assetAddName, setAssetAddName] = useState('');
@@ -405,38 +397,43 @@ export default function AppDashboard() {
 
   const showToast = (msg) => setToast(msg);
 
-  const assetPropertyOptions = [...new Set([...Object.keys(assetMap), ...(properties || []).map(p => p.name).filter(Boolean)])].sort();
+  const assetPropertyOptions = [...new Set([...Object.keys(assetMapFromApi), ...(properties || []).map(p => p.name).filter(Boolean)])].sort();
 
   const effectiveAssetMap = assetViewDate && assetSnapshots[assetViewDate]
     ? assetSnapshots[assetViewDate]
-    : assetMap;
+    : assetMapFromApi;
   const assetSnapshotDates = Object.keys(assetSnapshots).sort().reverse();
   const isViewingSnapshot = !!assetViewDate;
 
   const handleRecordAssetSnapshot = () => {
     const today = new Date().toISOString().slice(0, 10);
-    setAssetSnapshots(prev => ({ ...prev, [today]: JSON.parse(JSON.stringify(assetMap)) }));
+    const snapshot = {};
+    Object.entries(assetMapFromApi).forEach(([prop, items]) => {
+      snapshot[prop] = (items || []).map(({ n, q }) => ({ n, q }));
+    });
+    setAssetSnapshots(prev => ({ ...prev, [today]: snapshot }));
     setAssetViewDate(today);
     showToast('Recorded as at ' + new Date(today + 'Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }));
   };
 
-  const handleAddAsset = (e) => {
+  const handleAddAsset = async (e) => {
     e.preventDefault();
     const prop = (assetAddProperty || '').trim();
     const name = (assetAddName || '').trim();
     const qty = Math.max(1, parseInt(assetAddQty, 10) || 1);
     if (!prop) { showToast('Select or enter a property'); return; }
     if (!name) { showToast('Enter asset name'); return; }
-    setAssetMap(prev => ({
-      ...prev,
-      [prop]: [...(prev[prop] || []), { n: name, q: qty }],
-    }));
-    if (!assetMap[prop]) setAssetKey(prop);
-    setAssetAddOpen(false);
-    setAssetAddProperty('');
-    setAssetAddName('');
-    setAssetAddQty('1');
-    showToast('Asset added');
+    try {
+      await apiAddAsset({ name, propertyName: prop, quantity: qty });
+      if (!assetMapFromApi[prop]) setAssetKey(prop);
+      setAssetAddOpen(false);
+      setAssetAddProperty('');
+      setAssetAddName('');
+      setAssetAddQty('1');
+      showToast('Asset added');
+    } catch (err) {
+      showToast(err.message || 'Failed to add asset');
+    }
   };
 
   const handleExportAssetsCsv = () => {
@@ -461,7 +458,7 @@ export default function AppDashboard() {
     const file = e?.target?.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       try {
         const text = (ev.target?.result || '').toString().trim();
         const lines = text.split(/\r?\n/).filter(Boolean);
@@ -482,31 +479,29 @@ export default function AppDashboard() {
         const header = lines[0].toLowerCase();
         const hasHeader = header.includes('property') && (header.includes('asset') || header.includes('name'));
         const start = hasHeader ? 1 : 0;
+        const targetProp = assetKey || Object.keys(assetMapFromApi)[0] || 'Property';
         let count = 0;
-        setAssetMap(prev => {
-          const next = JSON.parse(JSON.stringify(prev));
-          const targetProp = assetKey || Object.keys(prev)[0] || 'Property';
-          for (let i = start; i < lines.length; i++) {
-            const parts = parseCsvLine(lines[i]);
-            if (parts.length >= 3) {
-              const prop = (parts[0] || '').trim();
-              const name = (parts[1] || '').trim();
-              const qty = Math.max(1, parseInt(parts[2], 10) || 1);
-              if (!prop || !name) continue;
-              if (!next[prop]) next[prop] = [];
-              next[prop].push({ n: name, q: qty });
+        for (let i = start; i < lines.length; i++) {
+          const parts = parseCsvLine(lines[i]);
+          if (parts.length >= 3) {
+            const prop = (parts[0] || '').trim();
+            const name = (parts[1] || '').trim();
+            const qty = Math.max(1, parseInt(parts[2], 10) || 1);
+            if (!prop || !name) continue;
+            try {
+              await apiAddAsset({ name, propertyName: prop, quantity: qty });
               count++;
-            } else if (parts.length >= 2) {
-              const name = (parts[0] || '').trim();
-              const qty = Math.max(1, parseInt(parts[1], 10) || 1);
-              if (!name) continue;
-              if (!next[targetProp]) next[targetProp] = [];
-              next[targetProp].push({ n: name, q: qty });
+            } catch (_) { /* skip failed row */ }
+          } else if (parts.length >= 2) {
+            const name = (parts[0] || '').trim();
+            const qty = Math.max(1, parseInt(parts[1], 10) || 1);
+            if (!name) continue;
+            try {
+              await apiAddAsset({ name, propertyName: targetProp, quantity: qty });
               count++;
-            }
+            } catch (_) { /* skip failed row */ }
           }
-          return next;
-        });
+        }
         showToast(count ? `Imported ${count} asset(s)` : 'No rows imported. Use: Property,Asset Name,Quantity');
       } catch (err) {
         showToast('Invalid CSV: ' + (err.message || 'parse error'));
@@ -1520,6 +1515,10 @@ export default function AppDashboard() {
                   </button>
                 </div>
               </div>
+
+              {assetsLoading && !assetViewDate && (
+                <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 12 }}>Loading assets…</p>
+              )}
 
               <div style={{ display: 'grid', gridTemplateColumns: '230px 1fr', gap: 18 }}>
                 <div style={{ background: '#fff', borderRadius: 0, border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)', overflow: 'hidden', alignSelf: 'flex-start', position: 'sticky', top: 80 }}>
