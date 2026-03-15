@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { usePropertyData } from '../../hooks/usePropertyData';
@@ -74,6 +74,7 @@ const S = {
   },
   userEmail: { fontSize: 12, color: 'rgba(255,255,255,0.65)' },
   signOut: {
+    display: 'inline-flex', alignItems: 'center', gap: 6,
     padding: '6px 14px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.2)',
     background: 'none', color: 'rgba(255,255,255,0.6)', cursor: 'pointer',
     fontSize: 12, letterSpacing: '0.05em', fontFamily: "'IBM Plex Sans',sans-serif",
@@ -356,7 +357,15 @@ export default function AppDashboard() {
   const [insSearch, setInsSearch] = useState('');
   const [insStatusFilter, setInsStatusFilter] = useState(''); // '', 'insured', 'uninsured'
   const [assetSearch, setAssetSearch] = useState('');
+  const [assetMap, setAssetMap] = useState(() => JSON.parse(JSON.stringify(STATIC_ASSETS)));
+  const [assetSnapshots, setAssetSnapshots] = useState({}); // { 'YYYY-MM-DD': { propertyName: [{n,q}], ... } }
+  const [assetViewDate, setAssetViewDate] = useState(null); // null = current, else snapshot date
   const [assetKey, setAssetKey] = useState(Object.keys(STATIC_ASSETS)[0] || null);
+  const [assetAddOpen, setAssetAddOpen] = useState(false);
+  const [assetAddProperty, setAssetAddProperty] = useState('');
+  const [assetAddName, setAssetAddName] = useState('');
+  const [assetAddQty, setAssetAddQty] = useState('1');
+  const assetCsvInputRef = useRef(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [detailProp, setDetailProp] = useState(null);
   const [selectedDoc, setSelectedDoc] = useState(null);
@@ -365,6 +374,15 @@ export default function AppDashboard() {
   const [propDocEdit, setPropDocEdit] = useState(null); // property document row being edited
   const [toast, setToast] = useState('');
   const [detailSaving, setDetailSaving] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [docFilterPropertyName, setDocFilterPropertyName] = useState(null); // when opening Documents from a property, show only that property's docs
+  const [registerExpandedId, setRegisterExpandedId] = useState(null); // property id for expandable mobile row
+  const [isMobileRegister, setIsMobileRegister] = useState(typeof window !== 'undefined' && window.innerWidth < 768);
+  useEffect(() => {
+    const mq = () => setIsMobileRegister(window.innerWidth < 768);
+    window.addEventListener('resize', mq);
+    return () => window.removeEventListener('resize', mq);
+  }, []);
 
   const totalVal = properties.reduce((s, p) => s + (p.estimatedCurrentValue || 0), 0);
   const totalInv = properties.reduce((s, p) => s + (p.totalPurchaseAmount || 0), 0);
@@ -386,6 +404,117 @@ export default function AppDashboard() {
   }, [toast]);
 
   const showToast = (msg) => setToast(msg);
+
+  const assetPropertyOptions = [...new Set([...Object.keys(assetMap), ...(properties || []).map(p => p.name).filter(Boolean)])].sort();
+
+  const effectiveAssetMap = assetViewDate && assetSnapshots[assetViewDate]
+    ? assetSnapshots[assetViewDate]
+    : assetMap;
+  const assetSnapshotDates = Object.keys(assetSnapshots).sort().reverse();
+  const isViewingSnapshot = !!assetViewDate;
+
+  const handleRecordAssetSnapshot = () => {
+    const today = new Date().toISOString().slice(0, 10);
+    setAssetSnapshots(prev => ({ ...prev, [today]: JSON.parse(JSON.stringify(assetMap)) }));
+    setAssetViewDate(today);
+    showToast('Recorded as at ' + new Date(today + 'Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }));
+  };
+
+  const handleAddAsset = (e) => {
+    e.preventDefault();
+    const prop = (assetAddProperty || '').trim();
+    const name = (assetAddName || '').trim();
+    const qty = Math.max(1, parseInt(assetAddQty, 10) || 1);
+    if (!prop) { showToast('Select or enter a property'); return; }
+    if (!name) { showToast('Enter asset name'); return; }
+    setAssetMap(prev => ({
+      ...prev,
+      [prop]: [...(prev[prop] || []), { n: name, q: qty }],
+    }));
+    if (!assetMap[prop]) setAssetKey(prop);
+    setAssetAddOpen(false);
+    setAssetAddProperty('');
+    setAssetAddName('');
+    setAssetAddQty('1');
+    showToast('Asset added');
+  };
+
+  const handleExportAssetsCsv = () => {
+    const rows = [];
+    Object.entries(effectiveAssetMap).forEach(([property, items]) => {
+      (items || []).forEach(({ n, q }) => rows.push([property, n, q]));
+    });
+    const header = 'Property,Asset Name,Quantity';
+    const body = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const csv = header + '\n' + body;
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `assets-export-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Export downloaded');
+  };
+
+  const handleUploadAssetsCsv = (e) => {
+    const file = e?.target?.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const text = (ev.target?.result || '').toString().trim();
+        const lines = text.split(/\r?\n/).filter(Boolean);
+        if (lines.length === 0) { showToast('CSV is empty'); e.target.value = ''; return; }
+        const parseCsvLine = (line) => {
+          const out = [];
+          let cur = '';
+          let inQuotes = false;
+          for (let i = 0; i < line.length; i++) {
+            const c = line[i];
+            if (c === '"') inQuotes = !inQuotes;
+            else if ((c === ',' && !inQuotes) || c === '\t') { out.push(cur.trim()); cur = ''; }
+            else cur += c;
+          }
+          out.push(cur.trim().replace(/^"|"$/g, '').replace(/""/g, '"'));
+          return out;
+        };
+        const header = lines[0].toLowerCase();
+        const hasHeader = header.includes('property') && (header.includes('asset') || header.includes('name'));
+        const start = hasHeader ? 1 : 0;
+        let count = 0;
+        setAssetMap(prev => {
+          const next = JSON.parse(JSON.stringify(prev));
+          const targetProp = assetKey || Object.keys(prev)[0] || 'Property';
+          for (let i = start; i < lines.length; i++) {
+            const parts = parseCsvLine(lines[i]);
+            if (parts.length >= 3) {
+              const prop = (parts[0] || '').trim();
+              const name = (parts[1] || '').trim();
+              const qty = Math.max(1, parseInt(parts[2], 10) || 1);
+              if (!prop || !name) continue;
+              if (!next[prop]) next[prop] = [];
+              next[prop].push({ n: name, q: qty });
+              count++;
+            } else if (parts.length >= 2) {
+              const name = (parts[0] || '').trim();
+              const qty = Math.max(1, parseInt(parts[1], 10) || 1);
+              if (!name) continue;
+              if (!next[targetProp]) next[targetProp] = [];
+              next[targetProp].push({ n: name, q: qty });
+              count++;
+            }
+          }
+          return next;
+        });
+        showToast(count ? `Imported ${count} asset(s)` : 'No rows imported. Use: Property,Asset Name,Quantity');
+      } catch (err) {
+        showToast('Invalid CSV: ' + (err.message || 'parse error'));
+      }
+      e.target.value = '';
+    };
+    reader.readAsText(file, 'UTF-8');
+  };
 
   const handleSaveProperty = async (e) => {
     e.preventDefault();
@@ -547,29 +676,50 @@ export default function AppDashboard() {
 
       <div style={S.root}>
         {/* ── NAV ── */}
-        <nav style={S.nav}>
-          <Link to="/dashboard" style={S.logo}>
+        <nav style={S.nav} className="dashboard-nav">
+          <Link to="/dashboard" style={S.logo} onClick={() => setMobileNavOpen(false)}>
             <div style={S.logoMark}>A</div>
-            <div style={S.logoText}>Alamait Property Register</div>
+            <div style={S.logoText}>{isMobileRegister ? 'Property Register' : 'Alamait Property Register'}</div>
           </Link>
 
-          <div style={S.navTabs}>
+          <button type="button" className="hamburger hamburger-dash" aria-label="Open menu" onClick={() => setMobileNavOpen(true)}>
+            <span /><span /><span />
+          </button>
+
+          <div style={S.navTabs} className="dashboard-nav-tabs">
             {['dashboard', 'register', 'insurance', 'assets', 'documents'].map(p => (
-              <button key={p} type="button" style={S.navTab(page === p)} onClick={() => setPage(p)}>
+              <button key={p} type="button" style={S.navTab(page === p)} onClick={() => { setPage(p); setMobileNavOpen(false); }}>
                 {p.charAt(0).toUpperCase() + p.slice(1)}
               </button>
             ))}
           </div>
 
-          <div style={S.navRight}>
-            <div style={S.userDot}>{initials}</div>
-            <span style={S.userEmail}>{user?.email || 'User'}</span>
-            <button type="button" style={S.signOut} onClick={logout}>Sign Out</button>
+          <div style={S.navRight} className="dashboard-nav-right">
+            <div style={S.userDot} title={user?.email || 'User'}>{initials}</div>
+            {!isMobileRegister && <span style={S.userEmail}>{user?.email || 'User'}</span>}
+            <button type="button" style={S.signOut} onClick={logout} aria-label="Sign out">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
+              </svg>
+              Sign Out
+            </button>
           </div>
         </nav>
 
+        <div className={`dashboard-nav-overlay ${mobileNavOpen ? 'open' : ''}`} onClick={() => setMobileNavOpen(false)} aria-hidden="true" />
+        <div className={`dashboard-nav-mobile ${mobileNavOpen ? 'open' : ''}`}>
+          <button type="button" className="dashboard-nav-mobile-close" aria-label="Close menu" onClick={() => setMobileNavOpen(false)}>×</button>
+          {['dashboard', 'register', 'insurance', 'assets', 'documents'].map(p => (
+            <button key={p} type="button" className={page === p ? 'dashboard-nav-mobile-link active' : 'dashboard-nav-mobile-link'} onClick={() => { setPage(p); setMobileNavOpen(false); }}>
+              {p.charAt(0).toUpperCase() + p.slice(1)}
+            </button>
+          ))}
+        </div>
+
         {/* ── BODY ── */}
-        <div style={S.body}>
+        <div style={S.body} className="dashboard-body">
 
           {/* ════ DASHBOARD (light bg, no blue) ════ */}
           {page === 'dashboard' && (
@@ -628,12 +778,13 @@ export default function AppDashboard() {
 
               {propLoading && <p style={{ color: 'var(--muted)', fontSize: 13 }}>Loading properties…</p>}
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10, marginTop: 8 }}>
+              <div className="dashboard-cards-grid dashboard-overview-cards" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10, marginTop: 8 }}>
                 {filtered.slice(0, 8).map(p => {
                   const meta = typeMeta(p.propertyType);
                   return (
                     <div
                       key={p.id}
+                      className="dashboard-property-card"
                       onClick={() => setDetailProp(p)}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 10,
@@ -719,16 +870,100 @@ export default function AppDashboard() {
                 />
                 <select className="fs" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
                   <option value="">All Types</option>
-                  {Object.keys(TYPE_META).map(t => <option key={t}>{t}</option>)}
+                  {Object.keys(TYPE_META).map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
                 <select className="fs" value={entityFilter} onChange={e => setEntityFilter(e.target.value)}>
                   <option value="">All Entities</option>
-                  {['SC', 'Alamait', 'TMT', 'Maitalan', 'VV'].map(ent => <option key={ent}>{ent}</option>)}
+                  {['SC', 'Alamait', 'TMT', 'Maitalan', 'VV'].map(ent => <option key={ent} value={ent}>{ent}</option>)}
                 </select>
               </div>
 
               {propLoading && <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 12 }}>Loading…</p>}
 
+              {/* Mobile: compact expandable rows (filter bar is the fbar above) */}
+              {isMobileRegister ? (
+                <div className="register-mobile">
+                  <div className="register-mobile-list">
+                    {filtered.length === 0 && (
+                      <div style={{ textAlign: 'center', color: 'var(--muted)', padding: '32px 16px' }}>No properties match your filters</div>
+                    )}
+                    {filtered.map((p, i) => {
+                      const doc = (propertyDocuments || []).find(d => String(d.propertyName || '').trim() === String(p.name || '').trim());
+                      const insRecord = (propertyInsurance || []).find(pi =>
+                        String(pi.propertyName || '').trim() === String(p.name || '').trim() ||
+                        String(pi.propertyRef || '') === String(p.id || '') || pi.propertyRef === p.id
+                      );
+                      const isInsured = insRecord ? (insRecord.insurance === 'Yes' || insRecord.insurance === true) : !!p.insured;
+                      const hasDocs = doc && (!!(doc.titleDeedsPhysicalLocation || '').trim() || !!(doc.titleDeedsDigitalDescription || '').trim());
+                      const hasDeedP = !!(doc?.titleDeedsPhysicalLocation?.trim());
+                      const hasDeedD = !!(doc?.titleDeedsDigitalDescription?.trim());
+                      const deedStatus = doc ? (hasDeedP && hasDeedD ? '✓ D+P' : hasDeedP ? '✓ P' : hasDeedD ? '✓ D' : '✗') : '✗';
+                      const hasPlans = !!(doc?.plansDescription?.trim());
+                      const plansStatus = doc ? (hasPlans ? '✓' : '✗') : '✗';
+                      const hasLease = !!(doc?.leaseAgreementDescription?.trim());
+                      const leaseStatus = doc ? (hasLease ? '✓' : '✗') : '✗';
+                      const expanded = registerExpandedId === p.id;
+                      return (
+                        <div
+                          key={p.id}
+                          className={`register-mobile-row ${expanded ? 'expanded' : ''}`}
+                          style={{ border: '1px solid var(--border)', borderRadius: 8, marginBottom: 8, overflow: 'hidden', background: '#fff', boxShadow: 'var(--shadow-sm)' }}
+                        >
+                          <div
+                            className="register-mobile-row-head"
+                            onClick={() => setRegisterExpandedId(expanded ? null : p.id)}
+                            style={{ padding: '12px 14px', cursor: 'pointer', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px 12px' }}
+                          >
+                            <span className="tdref" style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--muted)' }}>#{String(i + 1).padStart(2, '0')}</span>
+                            <div style={{ flex: '1 1 100%', minWidth: 0 }}>
+                              <div className="tdname" style={{ fontSize: 15, fontWeight: 600, color: 'var(--navy)' }}>{p.name}</div>
+                              <div className="tdaddr" style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>{p.address || '—'}</div>
+                            </div>
+                            <span className={`badge ${badgeClass(p.propertyType)}`} style={{ flexShrink: 0 }}>{p.propertyType}</span>
+                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--body)' }}>{p.ownedEntity || '—'}</span>
+                            <span title={hasDocs ? 'Title deeds on file' : 'No title deeds'} style={{ display: 'inline-flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+                              <span style={{ fontSize: 12 }}>📄</span>
+                              <span className={hasDocs ? 'ins-y' : 'ins-n'} style={{ fontSize: 10 }}>{hasDocs ? '✓' : '—'}</span>
+                            </span>
+                            <span
+                              title={isInsured && insRecord?.insurer ? insRecord.insurer : (isInsured ? 'Insured' : 'Not insured')}
+                              style={{
+                                width: 10,
+                                height: 10,
+                                borderRadius: '50%',
+                                flexShrink: 0,
+                                background: isInsured ? 'var(--green)' : '#c53030',
+                              }}
+                            />
+                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, fontWeight: 600, color: 'var(--navy)', marginLeft: 'auto' }}>{fmt(p.totalPurchaseAmount)}</span>
+                            <span style={{ fontSize: 12, color: 'var(--muted)' }}>{expanded ? '▼' : '▶'}</span>
+                          </div>
+                          {expanded && (
+                            <div className="register-mobile-row-detail" style={{ borderTop: '1px solid var(--border)', padding: '14px', background: 'var(--navy-mist)' }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 16px', fontSize: 13 }}>
+                                <div><span style={{ color: 'var(--muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Est. value</span><div style={{ fontWeight: 600 }}>{fmt(p.estimatedCurrentValue)}</div></div>
+                                <div><span style={{ color: 'var(--muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Insurance</span><div className={isInsured ? 'ins-y' : 'ins-n'}>{isInsured ? (insRecord?.insurer || '✓ Insured') : '✗ None'}</div></div>
+                                <div><span style={{ color: 'var(--muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Title deeds</span><div className={deedStatus === '✗' ? 'ins-n' : 'ins-y'}>{deedStatus}</div></div>
+                                <div><span style={{ color: 'var(--muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Plans</span><div className={plansStatus === '✗' ? 'ins-n' : 'ins-y'}>{plansStatus}</div></div>
+                                <div><span style={{ color: 'var(--muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Lease</span><div className={leaseStatus === '✗' ? 'ins-n' : 'ins-y'}>{leaseStatus}</div></div>
+                                <div><span style={{ color: 'var(--muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Date</span><div>{p.purchaseDate ? p.purchaseDate.slice(0, 7) : '—'}</div></div>
+                              </div>
+                              <button
+                                type="button"
+                                className="btn btn-maroon btn-sm"
+                                style={{ marginTop: 12, width: '100%' }}
+                                onClick={e => { e.stopPropagation(); setDetailProp(p); setRegisterExpandedId(null); }}
+                              >
+                                View full details →
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
               <div className="tw">
                 <table>
                   <thead>
@@ -740,12 +975,37 @@ export default function AppDashboard() {
                       <th>Date</th>
                       <th>Price</th>
                       <th>Est. Value</th>
-                      <th>Insurance</th>
+                      <th>Insurance / Insurer</th>
+                      <th title="D = Digital, P = Physical">Title Deeds</th>
+                      <th>Plans</th>
+                      <th>Lease</th>
                       <th></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map((p, i) => (
+                    {filtered.map((p, i) => {
+                      const doc = (propertyDocuments || []).find(d => String(d.propertyName || '').trim() === String(p.name || '').trim());
+                      const insRecord = (propertyInsurance || []).find(pi =>
+                        String(pi.propertyName || '').trim() === String(p.name || '').trim() ||
+                        String(pi.propertyRef || '') === String(p.id || '') || pi.propertyRef === p.id
+                      );
+                      const isInsured = insRecord
+                        ? (insRecord.insurance === 'Yes' || insRecord.insurance === true)
+                        : !!p.insured;
+                      const hasDeedP = !!(doc?.titleDeedsPhysicalLocation?.trim());
+                      const hasDeedD = !!(doc?.titleDeedsDigitalDescription?.trim());
+                      const deedStatus = doc ? (hasDeedP && hasDeedD ? '✓ D+P' : hasDeedP ? '✓ P' : hasDeedD ? '✓ D' : '✗') : '✗';
+                      const deedTitle = doc ? `Physical: ${doc.titleDeedsPhysicalLocation || '—'}\nDigital: ${doc.titleDeedsDigitalDescription || '—'}` : 'No document record';
+                      const hasPlans = !!(doc?.plansDescription?.trim());
+                      const plansStatus = doc ? (hasPlans ? '✓' : '✗') : '✗';
+                      const plansTitle = doc?.plansDescription ? `Plans: ${doc.plansDescription}` : 'No plans';
+                      const hasLease = !!(doc?.leaseAgreementDescription?.trim());
+                      const leaseStatus = doc ? (hasLease ? '✓' : '✗') : '✗';
+                      const leaseTitle = doc?.leaseAgreementDescription ? `Lease: ${doc.leaseAgreementDescription}${doc.fileLocationNotes ? '\nNotes: ' + doc.fileLocationNotes : ''}` : 'No lease';
+                      const plansLoc = (doc?.plansDescription || '').trim();
+                      const leaseLoc = (doc?.leaseAgreementDescription || '').trim();
+                      const short = (s, n = 18) => (s.length <= n ? s : s.slice(0, n) + '…');
+                      return (
                       <tr key={p.id} onClick={() => setDetailProp(p)} style={{ cursor: 'pointer' }}>
                         <td className="tdref">#{String(i + 1).padStart(2, '0')}</td>
                         <td>
@@ -759,8 +1019,19 @@ export default function AppDashboard() {
                         <td className="tdmono">{p.purchaseDate ? p.purchaseDate.slice(0, 7) : '—'}</td>
                         <td className="tdmono">{fmt(p.totalPurchaseAmount)}</td>
                         <td className="tdmono">{fmt(p.estimatedCurrentValue)}</td>
-                        <td>
-                          <span className={p.insured ? 'ins-y' : 'ins-n'}>{p.insured ? '✓ Insured' : '✗ None'}</span>
+                        <td title={isInsured && insRecord?.insurer ? `Insured by ${insRecord.insurer}` : undefined}>
+                          <span className={isInsured ? 'ins-y' : 'ins-n'}>
+                            {isInsured ? (insRecord?.insurer ? `✓ ${insRecord.insurer}` : '✓ Insured') : '✗ None'}
+                          </span>
+                        </td>
+                        <td className="tdmono" title={deedTitle} style={{ whiteSpace: 'nowrap' }}>
+                          <span className={deedStatus === '✗' ? 'ins-n' : 'ins-y'}>{deedStatus}</span>
+                        </td>
+                        <td className="tdmono" title={plansTitle} style={{ maxWidth: 140 }}>
+                          {plansStatus === '✗' ? <span className="ins-n">✗</span> : <span className="ins-y" title={plansTitle}>✓ {short(plansLoc)}</span>}
+                        </td>
+                        <td className="tdmono" title={leaseTitle} style={{ maxWidth: 140 }}>
+                          {leaseStatus === '✗' ? <span className="ins-n">✗</span> : <span className="ins-y" title={leaseTitle}>✓ {short(leaseLoc)}</span>}
                         </td>
                         <td>
                           <button
@@ -770,10 +1041,10 @@ export default function AppDashboard() {
                           >View →</button>
                         </td>
                       </tr>
-                    ))}
+                    );})}
                     {filtered.length === 0 && (
                       <tr>
-                        <td colSpan={9} style={{ textAlign: 'center', color: 'var(--muted)', padding: '40px 0' }}>
+                        <td colSpan={12} style={{ textAlign: 'center', color: 'var(--muted)', padding: '40px 0' }}>
                           No properties match your filters
                         </td>
                       </tr>
@@ -781,6 +1052,7 @@ export default function AppDashboard() {
                   </tbody>
                 </table>
               </div>
+              )}
             </>
           )}
 
@@ -932,7 +1204,7 @@ export default function AppDashboard() {
                     value={insSearch}
                     onChange={e => setInsSearch(e.target.value)}
                   />
-                  {(insCategory === 'property' || insCategory === 'cover') && (
+                  {(insCategory === 'property' || insCategory === 'cover' || insCategory === 'all') && (
                     <select className="fs" value={insStatusFilter} onChange={e => setInsStatusFilter(e.target.value)}>
                       <option value="">All status</option>
                       <option value="insured">Insured only</option>
@@ -962,7 +1234,7 @@ export default function AppDashboard() {
                 {insLoading && <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 16 }}>Loading insurance…</p>}
 
                 {insCategory === 'property' ? (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
+                  <div className="dashboard-cards-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
                     {filteredPropertyInsurance.length === 0 && !insLoading && (
                       <div style={{ padding: 16, background: 'var(--navy-mist)', borderRadius: 0, color: 'var(--muted)', fontSize: 13, gridColumn: '1 / -1' }}>No property insurance records</div>
                     )}
@@ -1014,7 +1286,7 @@ export default function AppDashboard() {
                     })}
                   </div>
                 ) : insCategory === 'cover' ? (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
+                  <div className="dashboard-cards-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
                     {filteredInsuredCover.length === 0 && !insLoading && (
                       <div style={{ padding: 16, background: 'var(--navy-mist)', borderRadius: 0, color: 'var(--muted)', fontSize: 13, gridColumn: '1 / -1' }}>No insured cover records</div>
                     )}
@@ -1066,36 +1338,131 @@ export default function AppDashboard() {
                     })}
                   </div>
                 ) : (
-                  <div className="dgrid">
-                    {insCategory === 'all' && propertyInsurance.length === 0 && vehicleInsurance.length === 0 && assetInsurance.length === 0 && !insLoading && (
-                      <div className="dcard" style={{ gridColumn: '1 / -1', textAlign: 'center', padding: 32, color: 'var(--muted)' }}>
-                        No insurance records
-                      </div>
+                  <div className="dashboard-cards-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
+                    {insCategory === 'all' && filteredPropertyInsurance.length === 0 && filteredVehicleInsurance.length === 0 && filteredInsuredCover.length === 0 && !insLoading && (
+                      <div style={{ padding: 16, background: 'var(--navy-mist)', borderRadius: 0, color: 'var(--muted)', fontSize: 13, gridColumn: '1 / -1' }}>No insurance records</div>
                     )}
-                    {insCategory === 'all' && propertyInsurance.map((item) => (
-                      <div key={item._id || item.propertyRef} className="dcard" onClick={() => setInsCategory('property')}>
-                        <div className="dicon" style={{ color: 'var(--green)' }}>⌂</div>
-                        <div className="dname">{item.propertyName || item.propertyRef || '—'}</div>
-                        <div className="dprop">{item.insurer || '—'}</div>
-                        <div className="ddate">{nextRenewal(item.nextPaymentDate)} · {item.termlyPremium != null ? '$' + Number(item.termlyPremium).toLocaleString() : '—'}</div>
+                    {insCategory === 'all' && filteredPropertyInsurance.map((item) => {
+                      const insured = item.insurance === 'Yes' || item.insurance === true;
+                      return (
+                        <div
+                          key={'prop-' + (item._id || item.propertyRef)}
+                          style={{
+                            background: '#fff',
+                            border: '1px solid var(--border)',
+                            borderTop: '3px solid ' + (insured ? 'var(--green)' : '#c53030'),
+                            borderRadius: 0,
+                            padding: '12px 14px',
+                            boxShadow: 'var(--shadow-sm)',
+                            cursor: 'pointer',
+                          }}
+                          onClick={() => setInsCategory('property')}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--muted)' }}>
+                              #{item.propertyRef} • {getPropType(item.propertyRef)}
+                            </div>
+                            <div style={{ fontSize: 12 }}>
+                              <span className={insured ? 'ins-y' : 'ins-n'}>{insured ? '✓ Insured' : '✗ None'}</span>
+                            </div>
+                          </div>
+                          <div className="tdname" style={{ marginBottom: 10 }}>{item.propertyName || '—'}</div>
+                          <div style={{ marginTop: 10, borderTop: '1px solid #e0e4e8', paddingTop: 10, fontSize: 12 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #e0e4e8' }}>
+                              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Insurer</span>
+                              <span>{item.insurer || '—'}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #e0e4e8' }}>
+                              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Termly premium</span>
+                              <span>{item.termlyPremium != null ? '$' + Number(item.termlyPremium).toLocaleString() : '—'}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #e0e4e8' }}>
+                              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Sum insured</span>
+                              <span>{item.amountInsured != null ? '$' + Number(item.amountInsured).toLocaleString() : '—'}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0' }}>
+                              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Next renewal</span>
+                              <span>{nextRenewal(item.nextPaymentDate)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {insCategory === 'all' && filteredVehicleInsurance.map((item, i) => (
+                      <div
+                        key={'veh-' + (item._id || item.id || i)}
+                        style={{
+                          background: '#fff',
+                          border: '1px solid var(--border)',
+                          borderTop: '3px solid var(--border)',
+                          borderRadius: 0,
+                          padding: '12px 14px',
+                          boxShadow: 'var(--shadow-sm)',
+                          cursor: 'pointer',
+                        }}
+                        onClick={() => showToast(item.name || item.vehicleName || 'Vehicle policy')}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--muted)' }}>Vehicle</div>
+                          <div style={{ fontSize: 12 }}>🚗</div>
+                        </div>
+                        <div className="tdname" style={{ marginBottom: 10 }}>{item.name || item.vehicleName || item.title || 'Vehicle policy'}</div>
+                        <div style={{ marginTop: 10, borderTop: '1px solid #e0e4e8', paddingTop: 10, fontSize: 12 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #e0e4e8' }}>
+                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Insurer</span>
+                            <span>{item.insurer || item.provider || '—'}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0' }}>
+                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Policy #</span>
+                            <span>{item.policyNumber || '—'}</span>
+                          </div>
+                        </div>
                       </div>
                     ))}
-                    {(insCategory === 'all' || insCategory === 'vehicle') && vehicleInsurance.map((item, i) => (
-                      <div key={item._id || item.id || i} className="dcard" onClick={() => showToast(item.name || item.vehicleName || 'Vehicle policy')}>
-                        <div className="dicon">🚗</div>
-                        <div className="dname">{item.name || item.vehicleName || item.title || 'Vehicle policy'}</div>
-                        <div className="dprop">{item.insurer || item.provider || '—'}</div>
-                        <div className="ddate">{item.policyNumber || '—'}</div>
-                      </div>
-                    ))}
-                    {(insCategory === 'all' || insCategory === 'cover') && assetInsurance.map((item, i) => (
-                      <div key={item._id || item.id || i} className="dcard" onClick={() => setInsCategory('cover')}>
-                        <div className="dicon" style={{ color: 'var(--maroon)' }}>🛡</div>
-                        <div className="dname">{item.cover || item.name || item.title || item.type || 'Cover'}</div>
-                        <div className="dprop">{item.insurer || item.description || item.category || '—'}</div>
-                        <div className="ddate">{item.nextPaymentDate ? nextRenewal(item.nextPaymentDate) : 'Asset cover'}</div>
-                      </div>
-                    ))}
+                    {insCategory === 'all' && filteredInsuredCover.map((item) => {
+                      const insured = item.insurance === 'Yes' || item.insurance === true;
+                      return (
+                        <div
+                          key={'cover-' + (item._id || item.propertyRef)}
+                          style={{
+                            background: '#fff',
+                            border: '1px solid var(--border)',
+                            borderTop: '3px solid ' + (insured ? 'var(--green)' : '#c53030'),
+                            borderRadius: 0,
+                            padding: '12px 14px',
+                            boxShadow: 'var(--shadow-sm)',
+                            cursor: 'pointer',
+                          }}
+                          onClick={() => setInsCategory('cover')}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--muted)' }}>#{item.propertyRef} • Cover</div>
+                            <div style={{ fontSize: 12 }}>
+                              <span className={insured ? 'ins-y' : 'ins-n'}>{insured ? '✓ Insured' : '✗ None'}</span>
+                            </div>
+                          </div>
+                          <div className="tdname" style={{ marginBottom: 10 }}>{item.cover || '—'}</div>
+                          <div style={{ marginTop: 10, borderTop: '1px solid #e0e4e8', paddingTop: 10, fontSize: 12 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #e0e4e8' }}>
+                              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Insurer</span>
+                              <span>{item.insurer || '—'}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #e0e4e8' }}>
+                              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Termly premium</span>
+                              <span>{item.termlyPremium != null ? '$' + Number(item.termlyPremium).toLocaleString() : '—'}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #e0e4e8' }}>
+                              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Sum insured</span>
+                              <span>{item.amountInsured != null ? '$' + Number(item.amountInsured).toLocaleString() : '—'}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0' }}>
+                              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Next renewal</span>
+                              <span>{nextRenewal(item.nextPaymentDate)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </>
@@ -1109,10 +1476,47 @@ export default function AppDashboard() {
                 <div>
                   <div className="pg-eyebrow">Inventory</div>
                   <div className="pg-title">Asset Register</div>
+                  <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                    As at {assetViewDate
+                      ? new Date(assetViewDate + 'Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+                      : new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) + ' (current)'}
+                  </div>
+                  <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <label style={{ fontSize: 12, color: 'var(--muted)' }}>View:</label>
+                    <select
+                      value={assetViewDate ?? ''}
+                      onChange={e => { const v = e.target.value; setAssetViewDate(v || null); if (v) setAssetKey(Object.keys(assetSnapshots[v] || {}).sort()[0] || null); }}
+                      style={{ fontSize: 12, padding: '4px 8px', minWidth: 140 }}
+                    >
+                      <option value="">Current (editable)</option>
+                      {assetSnapshotDates.map(d => (
+                        <option key={d} value={d}>
+                          {new Date(d + 'Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-                <div className="pg-actions">
-                  <button type="button" className="btn btn-outline btn-sm" onClick={() => showToast('Export coming soon')}>
-                    ↓ Export
+                <div className="pg-actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {!isViewingSnapshot && (
+                    <>
+                      <input
+                        type="file"
+                        accept=".csv"
+                        ref={assetCsvInputRef}
+                        style={{ display: 'none' }}
+                        onChange={handleUploadAssetsCsv}
+                      />
+                      <button type="button" className="btn btn-outline btn-sm" onClick={() => assetCsvInputRef.current?.click()}>
+                        ↑ Upload CSV
+                      </button>
+                      <button type="button" className="btn btn-outline btn-sm" onClick={handleRecordAssetSnapshot}>
+                        Record as at today
+                      </button>
+                    </>
+                  )}
+                  <button type="button" className="btn btn-maroon btn-sm" onClick={handleExportAssetsCsv}>
+                    ↓ Export CSV
                   </button>
                 </div>
               </div>
@@ -1122,8 +1526,9 @@ export default function AppDashboard() {
                   <div style={{ background: 'var(--navy)', padding: '13px 16px', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.6)' }}>
                     Properties
                   </div>
-                  {Object.keys(STATIC_ASSETS).map((name) => {
+                  {Object.keys(effectiveAssetMap).sort().map((name) => {
                     const active = assetKey === name;
+                    const list = effectiveAssetMap[name] || [];
                     return (
                       <button
                         key={name}
@@ -1147,7 +1552,7 @@ export default function AppDashboard() {
                       >
                         <span>{name}</span>
                         <span style={{ background: 'var(--maroon-pale)', color: 'var(--maroon)', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, padding: '2px 7px', borderRadius: 4 }}>
-                          {STATIC_ASSETS[name].length}
+                          {list.length}
                         </span>
                       </button>
                     );
@@ -1159,18 +1564,26 @@ export default function AppDashboard() {
                     <div style={{ textAlign: 'center', padding: '56px 20px', color: 'var(--muted)' }}>
                       <div style={{ fontSize: 40, marginBottom: 12 }}>📦</div>
                       <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 20, color: 'var(--navy)' }}>Select a property</div>
-                      <div style={{ fontSize: 13, marginTop: 5 }}>to view its recorded assets</div>
+                      <div style={{ fontSize: 13, marginTop: 5 }}>to view its recorded assets{isViewingSnapshot ? '' : ', or add one below'}</div>
+                      {!isViewingSnapshot && (
+                        <div style={{ marginTop: 16 }}>
+                          <button type="button" className="btn btn-maroon btn-sm" onClick={() => setAssetAddOpen(true)}>+ Add Asset</button>
+                        </div>
+                      )}
                     </div>
                   )}
                   {assetKey && (
                     <>
+                      {isViewingSnapshot && (
+                        <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>Snapshot — read only</div>
+                      )}
                       <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 26, color: 'var(--navy)', marginBottom: 3 }}>
                         {assetKey}
                       </div>
                       <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.15em', color: 'var(--maroon)', textTransform: 'uppercase', marginBottom: 20 }}>
-                        {STATIC_ASSETS[assetKey].length} items on record
+                        {(effectiveAssetMap[assetKey] || []).length} items on record
                       </div>
-                      {STATIC_ASSETS[assetKey].map((a, i) => (
+                      {(effectiveAssetMap[assetKey] || []).map((a, i) => (
                         <div key={a.n + i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border-light)' }}>
                           <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--muted)', width: 20, textAlign: 'right', flexShrink: 0 }}>
                             {String(i + 1).padStart(2, '0')}
@@ -1181,15 +1594,75 @@ export default function AppDashboard() {
                           </div>
                         </div>
                       ))}
-                      <div style={{ marginTop: 18 }}>
-                        <button type="button" className="btn btn-outline btn-sm" onClick={() => showToast('Add asset — coming soon')}>
-                          + Add Asset
-                        </button>
-                      </div>
+                      {!isViewingSnapshot && (
+                        <div style={{ marginTop: 18 }}>
+                          <button type="button" className="btn btn-maroon btn-sm" onClick={() => { setAssetAddProperty(assetKey); setAssetAddOpen(true); }}>
+                            + Add Asset
+                          </button>
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
               </div>
+
+              {/* Add Asset modal */}
+              {assetAddOpen && (
+                <div style={S.mbg} onClick={() => setAssetAddOpen(false)}>
+                  <div className="modal" onClick={e => e.stopPropagation()}>
+                    <div className="mhd">
+                      <button type="button" className="mx" onClick={() => setAssetAddOpen(false)}>×</button>
+                      <div className="mtitle">Add Asset</div>
+                      <div className="msub">Property and quantity</div>
+                    </div>
+                    <form onSubmit={handleAddAsset}>
+                      <div className="mbody">
+                        <div className="mgrid">
+                          <div className="full">
+                            <label className="ml" htmlFor="asset-prop">Property</label>
+                            <select
+                              id="asset-prop"
+                              className="ms"
+                              value={assetAddProperty}
+                              onChange={e => setAssetAddProperty(e.target.value)}
+                            >
+                              <option value="">— Select property —</option>
+                              {assetPropertyOptions.map(p => (
+                                <option key={p} value={p}>{p}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="full">
+                            <label className="ml" htmlFor="asset-name">Asset name</label>
+                            <input
+                              id="asset-name"
+                              className="mi"
+                              placeholder="e.g. Diesel Generator"
+                              value={assetAddName}
+                              onChange={e => setAssetAddName(e.target.value)}
+                            />
+                          </div>
+                          <div>
+                            <label className="ml" htmlFor="asset-qty">Quantity</label>
+                            <input
+                              id="asset-qty"
+                              className="mi"
+                              type="number"
+                              min={1}
+                              value={assetAddQty}
+                              onChange={e => setAssetAddQty(e.target.value)}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mft">
+                        <button type="button" className="btn btn-outline btn-sm" onClick={() => setAssetAddOpen(false)}>Cancel</button>
+                        <button type="submit" className="btn btn-maroon btn-sm">Add</button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
             </>
           )}
 
@@ -1226,6 +1699,13 @@ export default function AppDashboard() {
                 ))}
               </div>
 
+              {docFilterPropertyName && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, padding: '10px 14px', background: 'var(--maroon)', color: '#fff', borderRadius: 6 }}>
+                  <span style={{ fontSize: 13 }}>Showing documents for: <strong>{docFilterPropertyName}</strong></span>
+                  <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto', background: 'rgba(255,255,255,0.2)', color: '#fff', border: 'none' }} onClick={() => setDocFilterPropertyName(null)}>Show all</button>
+                </div>
+              )}
+
               <div className="fbar">
                 <input
                   className="fi"
@@ -1236,7 +1716,7 @@ export default function AppDashboard() {
                 />
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
+              <div className="dashboard-cards-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
                 <div
                   className="dcard dupload"
                   onClick={() => setDocUploadOpen(true)}
@@ -1249,6 +1729,16 @@ export default function AppDashboard() {
 
                 {(propertyDocuments || [])
                   .filter((row) => {
+                    if (docFilterPropertyName && row.propertyName !== docFilterPropertyName) return false;
+                    if (docCategory !== 'all') {
+                      const hasDeeds = !!(row.titleDeedsPhysicalLocation || '').trim() || !!(row.titleDeedsDigitalDescription || '').trim();
+                      const hasPlansPermits = !!(row.plansDescription || '').trim() || !!(row.permitsDescription || '').trim();
+                      const hasLegal = !!(row.leaseAgreementDescription || '').trim() || !!(row.fileLocationNotes || '').trim();
+                      if (docCategory === 'deeds' && !hasDeeds) return false;
+                      if (docCategory === 'valuations' && !hasPlansPermits) return false;
+                      if (docCategory === 'legal' && !hasLegal) return false;
+                      if (docCategory === 'insurance') return true;
+                    }
                     const q = (docSearch || '').toLowerCase();
                     if (!q) return true;
                     return [
@@ -1256,6 +1746,8 @@ export default function AppDashboard() {
                       row.propertyUse,
                       row.titleDeedsPhysicalLocation,
                       row.titleDeedsDigitalDescription,
+                      row.plansDescription,
+                      row.leaseAgreementDescription,
                       row.fileLocationNotes,
                     ].some(v => String(v || '').toLowerCase().includes(q));
                   })
@@ -1326,7 +1818,39 @@ export default function AppDashboard() {
                   <div style={{ fontSize: 13, color: 'var(--muted)', padding: '8px 0' }}>Loading property documents…</div>
                 ) : !propertyDocuments.length ? (
                   <div style={{ fontSize: 13, color: 'var(--muted)', padding: '8px 0' }}>No property document register data found.</div>
-                ) : (
+                ) : (() => {
+                  const applyDocFilters = (r) => {
+                    if (docFilterPropertyName && r.propertyName !== docFilterPropertyName) return false;
+                    if (docCategory !== 'all') {
+                      const hasDeeds = !!(r.titleDeedsPhysicalLocation || '').trim() || !!(r.titleDeedsDigitalDescription || '').trim();
+                      const hasPlansPermits = !!(r.plansDescription || '').trim() || !!(r.permitsDescription || '').trim();
+                      const hasLegal = !!(r.leaseAgreementDescription || '').trim() || !!(r.fileLocationNotes || '').trim();
+                      if (docCategory === 'deeds' && !hasDeeds) return false;
+                      if (docCategory === 'valuations' && !hasPlansPermits) return false;
+                      if (docCategory === 'legal' && !hasLegal) return false;
+                    }
+                    const q = (docSearch || '').toLowerCase();
+                    if (q && ![
+                      r.propertyName,
+                      r.propertyUse,
+                      r.titleDeedsPhysicalLocation,
+                      r.titleDeedsDigitalDescription,
+                      r.plansDescription,
+                      r.leaseAgreementDescription,
+                      r.fileLocationNotes,
+                    ].some(v => String(v || '').toLowerCase().includes(q))) return false;
+                    return true;
+                  };
+                  const tableRows = propertyDocuments.filter(applyDocFilters);
+                  if (!tableRows.length && docFilterPropertyName)
+                    return (
+                      <div style={{ fontSize: 13, color: 'var(--muted)', padding: '8px 0' }}>No documents for <strong>{docFilterPropertyName}</strong>. <button type="button" className="btn btn-outline btn-sm" style={{ marginTop: 6 }} onClick={() => setDocFilterPropertyName(null)}>Show all</button></div>
+                    );
+                  if (!tableRows.length)
+                    return (
+                      <div style={{ fontSize: 13, color: 'var(--muted)', padding: '8px 0' }}>No documents match the current filters.</div>
+                    );
+                  return (
                   <table className="table">
                     <thead>
                       <tr>
@@ -1342,7 +1866,7 @@ export default function AppDashboard() {
                       </tr>
                     </thead>
                     <tbody>
-                      {propertyDocuments.map((row) => (
+                      {tableRows.map((row) => (
                         <tr key={row._id || row.id}>
                           <td>{row.propertyName}</td>
                           <td>{row.propertyUse}</td>
@@ -1360,7 +1884,8 @@ export default function AppDashboard() {
                       ))}
                     </tbody>
                   </table>
-                )}
+                  );
+                })()}
               </div>
             </>
           )}
@@ -1793,7 +2318,7 @@ export default function AppDashboard() {
                   >
                     {detailSaving ? 'Saving…' : 'Save changes'}
                   </button>
-                  <button type="button" className="btn btn-outline btn-sm" onClick={() => { setDetailProp(null); setPage('documents'); }}>Documents</button>
+                  <button type="button" className="btn btn-outline btn-sm" onClick={() => { setDocFilterPropertyName(detailProp?.name ?? null); setDetailProp(null); setPage('documents'); }}>Documents</button>
                 </div>
               </div>
             </div>

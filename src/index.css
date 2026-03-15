@@ -8,15 +8,10 @@
   html {
     @apply antialiased;
   }
-  
-  body {
-    @apply text-gray-800;
-  }
-  
+  /* body color/type from theme.css (--ink, IBM Plex Sans) – don’t override here */
   input, select, textarea {
     @apply border border-gray-300 rounded-md px-3 py-2;
   }
-  
   h1, h2, h3, h4, h5, h6 {
     @apply font-medium leading-tight;
   }
@@ -35,4 +30,8 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
+  /* Extra responsive: prevent text overflow on small screens */
+  .break-word { word-break: break-word; overflow-wrap: break-word; }
+  /* Smooth momentum scrolling on iOS */
+  .overflow-touch { -webkit-overflow-scrolling: touch; }
 }

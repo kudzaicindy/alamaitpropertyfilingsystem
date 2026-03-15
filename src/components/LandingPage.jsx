@@ -1,11 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 export default function LandingPage() {
+  const [menuOpen, setMenuOpen] = useState(false);
   return (
     <div id="screen-landing" style={{ background: '#fff', minHeight: '100vh', overflow: 'hidden' }}>
       <nav className="pub-nav">
-        <Link to="/" className="pub-logo">
+        <Link to="/" className="pub-logo" onClick={() => setMenuOpen(false)}>
           <div className="pub-logo-mark">A</div>
           <div>
             <div className="pub-logo-name">Alamait Property Register</div>
@@ -15,11 +16,21 @@ export default function LandingPage() {
         <div className="pub-nav-links">
           <a href="#features">Features</a>
         </div>
+        <button type="button" className="hamburger" aria-label="Open menu" onClick={() => setMenuOpen(true)}>
+          <span /><span /><span />
+        </button>
         <div className="pub-nav-right">
-          <Link to="/login" className="btn-ghost">Sign In</Link>
-          <Link to="/login" className="btn-cta">Access System →</Link>
+          <Link to="/login" className="btn-ghost" onClick={() => setMenuOpen(false)}>Sign In</Link>
+          <Link to="/login" className="btn-cta" onClick={() => setMenuOpen(false)}>Access System →</Link>
         </div>
       </nav>
+      <div className={`pub-nav-overlay ${menuOpen ? 'open' : ''}`} onClick={() => setMenuOpen(false)} aria-hidden="true" />
+      <div className={`pub-nav-mobile ${menuOpen ? 'open' : ''}`}>
+        <button type="button" className="pub-nav-mobile-close" aria-label="Close menu" onClick={() => setMenuOpen(false)}>×</button>
+        <a href="#features" className="pub-nav-mobile-link" onClick={() => setMenuOpen(false)}>Features</a>
+        <Link to="/login" className="pub-nav-mobile-link" onClick={() => setMenuOpen(false)}>Sign In</Link>
+        <Link to="/login" className="pub-nav-mobile-cta" onClick={() => setMenuOpen(false)}>Access System →</Link>
+      </div>
 
       <section className="hero">
         <div className="hero-grid-bg" />

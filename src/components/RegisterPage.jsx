@@ -9,6 +9,8 @@ export default function RegisterPage() {
     username: '', email: '', password: '', confirmPassword: '',
     firstName: '', lastName: '', role: 'assistant'
   });
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -79,11 +81,21 @@ export default function RegisterPage() {
             </div>
             <div className="l-field">
               <label className="l-label">Password</label>
-              <input className="l-input" type="password" value={form.password} onChange={e => update('password', e.target.value)} required />
+              <div className="l-password-wrap">
+                <input className="l-input" type={showPassword ? 'text' : 'password'} value={form.password} onChange={e => update('password', e.target.value)} required />
+                <button type="button" className="l-password-toggle" onClick={() => setShowPassword(s => !s)} aria-label={showPassword ? 'Hide password' : 'Show password'} title={showPassword ? 'Hide' : 'Show'}>
+                  {showPassword ? 'Hide' : 'Show'}
+                </button>
+              </div>
             </div>
             <div className="l-field">
               <label className="l-label">Confirm password</label>
-              <input className="l-input" type="password" value={form.confirmPassword} onChange={e => update('confirmPassword', e.target.value)} required />
+              <div className="l-password-wrap">
+                <input className="l-input" type={showConfirmPassword ? 'text' : 'password'} value={form.confirmPassword} onChange={e => update('confirmPassword', e.target.value)} required />
+                <button type="button" className="l-password-toggle" onClick={() => setShowConfirmPassword(s => !s)} aria-label={showConfirmPassword ? 'Hide password' : 'Show password'} title={showConfirmPassword ? 'Hide' : 'Show'}>
+                  {showConfirmPassword ? 'Hide' : 'Show'}
+                </button>
+              </div>
             </div>
             <button type="submit" className="btn-login" disabled={loading}>{loading ? 'Creating...' : 'Create account'}</button>
           </form>
