@@ -309,8 +309,8 @@ function HoverCard({ children, onClick, style }) {
 /* ─── main component ──────────────────────────────────────────── */
 export default function AppDashboard() {
   const { logout, user } = useAuth();
-  const { properties, isLoading: propLoading, addProperty, updateProperty } = usePropertyData();
-  const { propertyInsurance, vehicleInsurance, assetInsurance, insuredCover, isLoading: insLoading } = useInsuranceData();
+  const { properties, isLoading: propLoading, addProperty, updateProperty, deleteProperty } = usePropertyData();
+  const { propertyInsurance, vehicleInsurance, assetInsurance, insuredCover, isLoading: insLoading, updateInsurance, deleteInsurance, refreshInsuranceData } = useInsuranceData();
   const {
     documents: documentsList,
     isLoading: docsLoading,
@@ -326,7 +326,7 @@ export default function AppDashboard() {
     updatePropertyDocument,
     deletePropertyDocument,
   } = usePropertyDocuments();
-  const { assets, isLoading: assetsLoading, addAsset: apiAddAsset, refreshAssets } = useAssets();
+  const { assets, isLoading: assetsLoading, addAsset: apiAddAsset, deleteAsset: apiDeleteAsset, refreshAssets } = useAssets();
 
   const [page, setPage] = useState('dashboard');
   const [search, setSearch] = useState('');
@@ -343,10 +343,15 @@ export default function AppDashboard() {
   const [assetSearch, setAssetSearch] = useState('');
   const assetMapFromApi = useMemo(() => {
     const m = {};
+    const seen = {}; // per property: Set of lowercased names to avoid duplicates
     (assets || []).forEach(a => {
       const p = a.propertyName || 'Property';
-      if (!m[p]) m[p] = [];
-      m[p].push({ n: a.name, q: a.quantity ?? 1, id: a._id || a.id });
+      if (!m[p]) { m[p] = []; seen[p] = new Set(); }
+      const nameKey = (a.name || '').trim().toLowerCase();
+      if (nameKey && !seen[p].has(nameKey)) {
+        seen[p].add(nameKey);
+        m[p].push({ n: a.name, q: a.quantity ?? 1, id: a._id || a.id });
+      }
     });
     return m;
   }, [assets]);
@@ -370,6 +375,8 @@ export default function AppDashboard() {
   const [docFilterPropertyName, setDocFilterPropertyName] = useState(null); // when opening Documents from a property, show only that property's docs
   const [registerExpandedId, setRegisterExpandedId] = useState(null); // property id for expandable mobile row
   const [isMobileRegister, setIsMobileRegister] = useState(typeof window !== 'undefined' && window.innerWidth < 768);
+  const [insEditItem, setInsEditItem] = useState(null); // { item, type: 'property'|'vehicle'|'cover' }
+  const [insEditSaving, setInsEditSaving] = useState(false);
   useEffect(() => {
     const mq = () => setIsMobileRegister(window.innerWidth < 768);
     window.addEventListener('resize', mq);
@@ -416,6 +423,12 @@ export default function AppDashboard() {
     showToast('Recorded as at ' + new Date(today + 'Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }));
   };
 
+  const assetExistsForProperty = (propertyName, assetName, map = assetMapFromApi) => {
+    const list = map[propertyName] || [];
+    const key = (assetName || '').trim().toLowerCase();
+    return key && list.some(item => (item.n || '').trim().toLowerCase() === key);
+  };
+
   const handleAddAsset = async (e) => {
     e.preventDefault();
     const prop = (assetAddProperty || '').trim();
@@ -423,6 +436,10 @@ export default function AppDashboard() {
     const qty = Math.max(1, parseInt(assetAddQty, 10) || 1);
     if (!prop) { showToast('Select or enter a property'); return; }
     if (!name) { showToast('Enter asset name'); return; }
+    if (assetExistsForProperty(prop, name)) {
+      showToast('This asset already exists for this property');
+      return;
+    }
     try {
       await apiAddAsset({ name, propertyName: prop, quantity: qty });
       if (!assetMapFromApi[prop]) setAssetKey(prop);
@@ -480,7 +497,13 @@ export default function AppDashboard() {
         const hasHeader = header.includes('property') && (header.includes('asset') || header.includes('name'));
         const start = hasHeader ? 1 : 0;
         const targetProp = assetKey || Object.keys(assetMapFromApi)[0] || 'Property';
+        const key = (prop, assetName) => `${(prop || '').toLowerCase()}|${(assetName || '').trim().toLowerCase()}`;
+        const existingKeys = new Set();
+        Object.entries(assetMapFromApi).forEach(([p, items]) => {
+          (items || []).forEach(({ n }) => { if (n) existingKeys.add(key(p, n)); });
+        });
         let count = 0;
+        let skipped = 0;
         for (let i = start; i < lines.length; i++) {
           const parts = parseCsvLine(lines[i]);
           if (parts.length >= 3) {
@@ -488,21 +511,28 @@ export default function AppDashboard() {
             const name = (parts[1] || '').trim();
             const qty = Math.max(1, parseInt(parts[2], 10) || 1);
             if (!prop || !name) continue;
+            const k = key(prop, name);
+            if (existingKeys.has(k)) { skipped++; continue; }
             try {
               await apiAddAsset({ name, propertyName: prop, quantity: qty });
+              existingKeys.add(k);
               count++;
             } catch (_) { /* skip failed row */ }
           } else if (parts.length >= 2) {
             const name = (parts[0] || '').trim();
             const qty = Math.max(1, parseInt(parts[1], 10) || 1);
             if (!name) continue;
+            const k = key(targetProp, name);
+            if (existingKeys.has(k)) { skipped++; continue; }
             try {
               await apiAddAsset({ name, propertyName: targetProp, quantity: qty });
+              existingKeys.add(k);
               count++;
             } catch (_) { /* skip failed row */ }
           }
         }
-        showToast(count ? `Imported ${count} asset(s)` : 'No rows imported. Use: Property,Asset Name,Quantity');
+        const msg = count ? `Imported ${count} asset(s)` : 'No rows imported. Use: Property,Asset Name,Quantity';
+        showToast(skipped ? `${msg} (${skipped} duplicate(s) skipped)` : msg);
       } catch (err) {
         showToast('Invalid CSV: ' + (err.message || 'parse error'));
       }
@@ -648,6 +678,30 @@ export default function AppDashboard() {
     try {
       await deletePropertyDocument(row._id || row.id);
       showToast('Property document deleted');
+    } catch (err) {
+      showToast(err.message || 'Delete failed');
+    }
+  };
+
+  const handleDeleteProperty = async () => {
+    if (!detailProp) return;
+    if (!window.confirm(`Delete property "${detailProp.name}"? This cannot be undone.`)) return;
+    try {
+      await deleteProperty(detailProp.id);
+      setDetailProp(null);
+      showToast('Property deleted');
+    } catch (err) {
+      showToast(err.message || 'Delete failed');
+    }
+  };
+
+  const handleDeleteAsset = async (asset) => {
+    const id = asset.id ?? asset._id;
+    if (!id) return;
+    if (!window.confirm(`Delete asset "${asset.n || asset.name}"?`)) return;
+    try {
+      await apiDeleteAsset(id);
+      showToast('Asset deleted');
     } catch (err) {
       showToast(err.message || 'Delete failed');
     }
@@ -1246,8 +1300,9 @@ export default function AppDashboard() {
                             padding: '12px 14px',
                             boxShadow: 'var(--shadow-sm)',
                             cursor: 'pointer',
+                            position: 'relative',
                           }}
-                          onClick={() => showToast(item.propertyName || item.propertyRef)}
+                          onClick={() => setInsEditItem({ item, type: 'property' })}
                         >
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                             <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--muted)' }}>
@@ -1280,6 +1335,43 @@ export default function AppDashboard() {
                       );
                     })}
                   </div>
+                ) : insCategory === 'vehicle' ? (
+                  <div className="dashboard-cards-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
+                    {filteredVehicleInsurance.length === 0 && !insLoading && (
+                      <div style={{ padding: 16, background: 'var(--navy-mist)', borderRadius: 0, color: 'var(--muted)', fontSize: 13, gridColumn: '1 / -1' }}>No vehicle insurance records</div>
+                    )}
+                    {filteredVehicleInsurance.map((item) => (
+                      <div
+                        key={item._id || item.id}
+                        style={{
+                          background: '#fff',
+                          border: '1px solid var(--border)',
+                          borderTop: '3px solid var(--border)',
+                          borderRadius: 0,
+                          padding: '12px 14px',
+                          boxShadow: 'var(--shadow-sm)',
+                          cursor: 'pointer',
+                        }}
+                        onClick={() => setInsEditItem({ item, type: 'vehicle' })}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--muted)' }}>Vehicle</div>
+                          <div style={{ fontSize: 12 }}>🚗</div>
+                        </div>
+                        <div className="tdname" style={{ marginBottom: 10 }}>{item.name || item.vehicleName || item.title || 'Vehicle policy'}</div>
+                        <div style={{ marginTop: 10, borderTop: '1px solid #e0e4e8', paddingTop: 10, fontSize: 12 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #e0e4e8' }}>
+                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Insurer</span>
+                            <span>{item.insurer || item.provider || '—'}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0' }}>
+                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Policy #</span>
+                            <span>{item.policyNumber || '—'}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 ) : insCategory === 'cover' ? (
                   <div className="dashboard-cards-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
                     {filteredInsuredCover.length === 0 && !insLoading && (
@@ -1299,7 +1391,7 @@ export default function AppDashboard() {
                             boxShadow: 'var(--shadow-sm)',
                             cursor: 'pointer',
                           }}
-                          onClick={() => showToast(item.cover || item.propertyRef)}
+                          onClick={() => setInsEditItem({ item, type: 'cover' })}
                         >
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                             <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--muted)' }}>
@@ -1395,7 +1487,7 @@ export default function AppDashboard() {
                           boxShadow: 'var(--shadow-sm)',
                           cursor: 'pointer',
                         }}
-                        onClick={() => showToast(item.name || item.vehicleName || 'Vehicle policy')}
+                        onClick={() => setInsEditItem({ item, type: 'vehicle' })}
                       >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                           <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--muted)' }}>Vehicle</div>
@@ -1583,7 +1675,7 @@ export default function AppDashboard() {
                         {(effectiveAssetMap[assetKey] || []).length} items on record
                       </div>
                       {(effectiveAssetMap[assetKey] || []).map((a, i) => (
-                        <div key={a.n + i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border-light)' }}>
+                        <div key={(a.id ?? a._id) || (a.n + i)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border-light)' }}>
                           <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: 'var(--muted)', width: 20, textAlign: 'right', flexShrink: 0 }}>
                             {String(i + 1).padStart(2, '0')}
                           </div>
@@ -1591,6 +1683,9 @@ export default function AppDashboard() {
                           <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, fontWeight: 500, color: 'var(--navy)', background: 'var(--navy-mist)', padding: '3px 10px', minWidth: 34, textAlign: 'center' }}>
                             ×{a.q}
                           </div>
+                          {!isViewingSnapshot && (a.id ?? a._id) && (
+                            <button type="button" className="btn btn-outline btn-sm" style={{ color: 'var(--maroon)', borderColor: 'var(--maroon)', flexShrink: 0 }} onClick={() => handleDeleteAsset(a)} aria-label="Delete asset">Delete</button>
+                          )}
                         </div>
                       ))}
                       {!isViewingSnapshot && (
@@ -1891,6 +1986,123 @@ export default function AppDashboard() {
         </div>
 
         {/* ════ EDIT PROPERTY DOCUMENT MODAL ════ */}
+        {/* Edit Insurance modal (property / vehicle / cover) */}
+        {insEditItem && (
+          <div style={S.mbg} onClick={() => setInsEditItem(null)}>
+            <div className="modal" style={{ maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+              <div className="mhd">
+                <button type="button" className="mx" onClick={() => setInsEditItem(null)}>×</button>
+                <div className="mtitle">
+                  Edit {insEditItem.type === 'property' ? 'Property' : insEditItem.type === 'vehicle' ? 'Vehicle' : 'Asset'} Insurance
+                </div>
+                <div className="msub">{insEditItem.type === 'property' ? (insEditItem.item.propertyName || insEditItem.item.propertyRef) : insEditItem.type === 'vehicle' ? (insEditItem.item.name || insEditItem.item.vehicleName) : (insEditItem.item.cover || insEditItem.item.propertyRef)}</div>
+              </div>
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                const type = insEditItem.type;
+                const item = insEditItem.item;
+                const id = item._id || item.id;
+                if (!id) { showToast('Cannot edit: no id'); return; }
+                setInsEditSaving(true);
+                try {
+                  const get = (id) => document.getElementById('ins-edit-' + id)?.value ?? '';
+                  const getNum = (id) => { const v = document.getElementById('ins-edit-' + id)?.value; return v === '' ? undefined : Number(v); };
+                  if (type === 'property') {
+                    await updateInsurance('property', id, {
+                      ...item,
+                      propertyName: get('propertyName'),
+                      propertyRef: get('propertyRef') || item.propertyRef,
+                      insurer: get('insurer'),
+                      insurance: get('insured') === 'yes' ? 'Yes' : 'No',
+                      termlyPremium: getNum('termlyPremium'),
+                      amountInsured: getNum('amountInsured'),
+                      nextPaymentDate: get('nextPaymentDate') || undefined,
+                    });
+                  } else if (type === 'vehicle') {
+                    await updateInsurance('vehicle', id, {
+                      ...item,
+                      name: get('name') || item.vehicleName,
+                      vehicleName: get('name') || item.vehicleName,
+                      insurer: get('insurer'),
+                      provider: get('provider') || get('insurer'),
+                      policyNumber: get('policyNumber'),
+                    });
+                  } else {
+                    await updateInsurance('cover', id, {
+                      ...item,
+                      cover: get('cover'),
+                      propertyRef: get('propertyRef') || item.propertyRef,
+                      insurer: get('insurer'),
+                      insurance: get('insured') === 'yes' ? 'Yes' : 'No',
+                      termlyPremium: getNum('termlyPremium'),
+                      amountInsured: getNum('amountInsured'),
+                      nextPaymentDate: get('nextPaymentDate') || undefined,
+                    });
+                  }
+                  setInsEditItem(null);
+                  showToast('Insurance updated');
+                } catch (err) {
+                  showToast(err.message || 'Update failed');
+                } finally {
+                  setInsEditSaving(false);
+                }
+              }}>
+                <div className="mbody">
+                  {insEditItem.type === 'property' && (
+                    <div className="mgrid">
+                      <div><label className="ml" htmlFor="ins-edit-propertyName">Property name</label><input id="ins-edit-propertyName" className="mi" defaultValue={insEditItem.item.propertyName} /></div>
+                      <div><label className="ml" htmlFor="ins-edit-propertyRef">Property ref</label><input id="ins-edit-propertyRef" className="mi" defaultValue={insEditItem.item.propertyRef} placeholder="#1" /></div>
+                      <div className="full"><label className="ml" htmlFor="ins-edit-insurer">Insurer</label><input id="ins-edit-insurer" className="mi" defaultValue={insEditItem.item.insurer} /></div>
+                      <div><label className="ml" htmlFor="ins-edit-insured">Insured</label><select id="ins-edit-insured" className="ms" defaultValue={insEditItem.item.insurance === 'Yes' || insEditItem.item.insurance === true ? 'yes' : 'no'}><option value="yes">Yes</option><option value="no">No</option></select></div>
+                      <div><label className="ml" htmlFor="ins-edit-termlyPremium">Termly premium</label><input id="ins-edit-termlyPremium" className="mi" type="number" min="0" defaultValue={insEditItem.item.termlyPremium} /></div>
+                      <div><label className="ml" htmlFor="ins-edit-amountInsured">Sum insured</label><input id="ins-edit-amountInsured" className="mi" type="number" min="0" defaultValue={insEditItem.item.amountInsured} /></div>
+                      <div><label className="ml" htmlFor="ins-edit-nextPaymentDate">Next renewal (YYYY-MM)</label><input id="ins-edit-nextPaymentDate" className="mi" type="month" defaultValue={insEditItem.item.nextPaymentDate ? String(insEditItem.item.nextPaymentDate).slice(0, 7) : ''} /></div>
+                    </div>
+                  )}
+                  {insEditItem.type === 'vehicle' && (
+                    <div className="mgrid">
+                      <div className="full"><label className="ml" htmlFor="ins-edit-name">Vehicle / policy name</label><input id="ins-edit-name" className="mi" defaultValue={insEditItem.item.name || insEditItem.item.vehicleName} /></div>
+                      <div className="full"><label className="ml" htmlFor="ins-edit-insurer">Insurer</label><input id="ins-edit-insurer" className="mi" defaultValue={insEditItem.item.insurer || insEditItem.item.provider} /></div>
+                      <div><label className="ml" htmlFor="ins-edit-policyNumber">Policy number</label><input id="ins-edit-policyNumber" className="mi" defaultValue={insEditItem.item.policyNumber} /></div>
+                    </div>
+                  )}
+                  {insEditItem.type === 'cover' && (
+                    <div className="mgrid">
+                      <div><label className="ml" htmlFor="ins-edit-cover">Cover name</label><input id="ins-edit-cover" className="mi" defaultValue={insEditItem.item.cover} /></div>
+                      <div><label className="ml" htmlFor="ins-edit-propertyRef">Property ref</label><input id="ins-edit-propertyRef" className="mi" defaultValue={insEditItem.item.propertyRef} /></div>
+                      <div className="full"><label className="ml" htmlFor="ins-edit-insurer">Insurer</label><input id="ins-edit-insurer" className="mi" defaultValue={insEditItem.item.insurer} /></div>
+                      <div><label className="ml" htmlFor="ins-edit-insured">Insured</label><select id="ins-edit-insured" className="ms" defaultValue={insEditItem.item.insurance === 'Yes' || insEditItem.item.insurance === true ? 'yes' : 'no'}><option value="yes">Yes</option><option value="no">No</option></select></div>
+                      <div><label className="ml" htmlFor="ins-edit-termlyPremium">Termly premium</label><input id="ins-edit-termlyPremium" className="mi" type="number" min="0" defaultValue={insEditItem.item.termlyPremium} /></div>
+                      <div><label className="ml" htmlFor="ins-edit-amountInsured">Sum insured</label><input id="ins-edit-amountInsured" className="mi" type="number" min="0" defaultValue={insEditItem.item.amountInsured} /></div>
+                      <div><label className="ml" htmlFor="ins-edit-nextPaymentDate">Next renewal (YYYY-MM)</label><input id="ins-edit-nextPaymentDate" className="mi" type="month" defaultValue={insEditItem.item.nextPaymentDate ? String(insEditItem.item.nextPaymentDate).slice(0, 7) : ''} /></div>
+                    </div>
+                  )}
+                </div>
+                <div className="mft" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'space-between' }}>
+                  <div>
+                    <button type="button" className="btn btn-outline btn-sm" style={{ borderColor: '#c53030', color: '#c53030' }} onClick={async () => {
+                      if (!window.confirm('Delete this insurance record?')) return;
+                      const id = insEditItem.item._id || insEditItem.item.id;
+                      if (!id) { showToast('Cannot delete'); return; }
+                      try {
+                        await deleteInsurance(insEditItem.type, id);
+                        setInsEditItem(null);
+                        showToast('Deleted');
+                      } catch (err) {
+                        showToast(err.message || 'Delete failed');
+                      }
+                    }}>Delete</button>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button type="button" className="btn btn-outline btn-sm" onClick={() => setInsEditItem(null)}>Cancel</button>
+                    <button type="submit" className="btn btn-maroon btn-sm" disabled={insEditSaving}>{insEditSaving ? 'Saving…' : 'Save'}</button>
+                  </div>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
         {propDocEdit && (
           <div style={S.mbg} onClick={() => setPropDocEdit(null)}>
             <div className="modal" style={{ maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
@@ -2318,6 +2530,7 @@ export default function AppDashboard() {
                     {detailSaving ? 'Saving…' : 'Save changes'}
                   </button>
                   <button type="button" className="btn btn-outline btn-sm" onClick={() => { setDocFilterPropertyName(detailProp?.name ?? null); setDetailProp(null); setPage('documents'); }}>Documents</button>
+                  <button type="button" className="btn btn-outline btn-sm" style={{ color: 'var(--maroon)', borderColor: 'var(--maroon)' }} onClick={handleDeleteProperty} aria-label="Delete property">Delete property</button>
                 </div>
               </div>
             </div>

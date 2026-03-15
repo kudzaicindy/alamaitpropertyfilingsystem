@@ -78,12 +78,22 @@ export function usePropertyData() {
     return transform(updated);
   };
 
+  const deleteProperty = async (id) => {
+    const res = await fetchWithAuth(`/api/properties/${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j.message || j.error || 'Failed to delete property');
+    }
+    setProperties(prev => prev.filter(p => p.id !== id));
+  };
+
   return {
     properties,
     isLoading: loading,
     error,
     addProperty,
     updateProperty,
+    deleteProperty,
     refreshProperties: fetchProperties
   };
 }

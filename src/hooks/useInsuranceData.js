@@ -65,30 +65,62 @@ export function useInsuranceData() {
   }, [isAuthenticated]);
 
   const updateInsurance = async (type, id, data) => {
+    const resourceId = data._id || data.id || id;
     const path =
       type === 'property'
-        ? null
+        ? `/api/insurance/property/${resourceId}`
         : type === 'vehicle' || type === 'car'
-          ? `/api/insurance/cars/${data._id || id}`
-          : `/api/insurance/covers/${data._id || id}`;
-    if (!path) throw new Error('No dedicated endpoint for property insurance update');
+          ? `/api/insurance/cars/${resourceId}`
+          : `/api/insurance/covers/${resourceId}`;
     const res = await fetchWithAuth(path, {
-      method: 'PUT',
+      method: 'PATCH',
       body: JSON.stringify(data),
     });
-    if (!res.ok) throw new Error('Failed to update');
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j.message || j.error || 'Failed to update');
+    }
     const updated = await res.json();
     const payload = updated.data ?? updated;
-    if (type === 'vehicle' || type === 'car') {
+    if (type === 'property') {
+      setPropertyInsurance((prev) =>
+        prev.map((i) => ((i._id || i.id) === (payload._id || payload.id) ? payload : i))
+      );
+    } else if (type === 'vehicle' || type === 'car') {
       setCarInsurance((prev) =>
         prev.map((i) => ((i._id || i.id) === (payload._id || payload.id) ? payload : i))
       );
     } else {
+      setInsuredCover((prev) =>
+        prev.map((i) => ((i._id || i.id) === (payload._id || payload.id) ? payload : i))
+      );
       setInsuranceCover((prev) =>
         prev.map((i) => ((i._id || i.id) === (payload._id || payload.id) ? payload : i))
       );
     }
     return payload;
+  };
+
+  const deleteInsurance = async (type, id) => {
+    const path =
+      type === 'property'
+        ? `/api/insurance/property/${id}`
+        : type === 'vehicle' || type === 'car'
+          ? `/api/insurance/cars/${id}`
+          : `/api/insurance/covers/${id}`;
+    const res = await fetchWithAuth(path, { method: 'DELETE' });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j.message || j.error || 'Failed to delete');
+    }
+    if (type === 'property') {
+      setPropertyInsurance((prev) => prev.filter((i) => (i._id || i.id) !== id));
+    } else if (type === 'vehicle' || type === 'car') {
+      setCarInsurance((prev) => prev.filter((i) => (i._id || i.id) !== id));
+    } else {
+      setInsuredCover((prev) => prev.filter((i) => (i._id || i.id) !== id));
+      setInsuranceCover((prev) => prev.filter((i) => (i._id || i.id) !== id));
+    }
   };
 
   const addInsurance = async (data) => {
@@ -125,6 +157,7 @@ export function useInsuranceData() {
     isLoading: loading,
     error,
     updateInsurance,
+    deleteInsurance,
     addInsurance,
     refreshInsuranceData: fetchData,
   };
