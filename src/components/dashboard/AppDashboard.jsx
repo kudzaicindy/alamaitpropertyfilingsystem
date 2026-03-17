@@ -338,6 +338,7 @@ export default function AppDashboard() {
   const [docSearch, setDocSearch] = useState('');
   const [docUploadOpen, setDocUploadOpen] = useState(false);
   const [docUploadFile, setDocUploadFile] = useState(null);
+  const [docUploadPropertyId, setDocUploadPropertyId] = useState('');
   const [docUploading, setDocUploading] = useState(false);
   const [insCategory, setInsCategory] = useState('all');
   const [insSearch, setInsSearch] = useState('');
@@ -620,6 +621,7 @@ export default function AppDashboard() {
       await refreshDocuments();
       setDocUploadOpen(false);
       setDocUploadFile(null);
+      setDocUploadPropertyId('');
       document.getElementById('doc-upload-form')?.reset();
     } catch (err) {
       showToast(err.message || 'Failed to save document');
@@ -1795,20 +1797,25 @@ export default function AppDashboard() {
                 ))}
               </div>
 
-              {docFilterPropertyName && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, padding: '10px 14px', background: 'var(--maroon)', color: '#fff', borderRadius: 6 }}>
-                  <span style={{ fontSize: 13 }}>Showing documents for: <strong>{docFilterPropertyName}</strong></span>
-                  <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto', background: 'rgba(255,255,255,0.2)', color: '#fff', border: 'none' }} onClick={() => setDocFilterPropertyName(null)}>Show all</button>
-                </div>
-              )}
-
-              <div className="fbar">
+              <div className="fbar" style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <select
+                  className="ms"
+                  style={{ minWidth: 160 }}
+                  value={docFilterPropertyName || ''}
+                  onChange={e => setDocFilterPropertyName(e.target.value || null)}
+                >
+                  <option value="">All properties</option>
+                  {Array.from(new Set(propertyDocuments.map(d => d.propertyName).filter(Boolean))).sort().map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
                 <input
                   className="fi"
                   type="text"
                   placeholder="Search name, property, location…"
                   value={docSearch}
                   onChange={e => setDocSearch(e.target.value)}
+                  style={{ flex: 1 }}
                 />
               </div>
 
@@ -1823,28 +1830,96 @@ export default function AppDashboard() {
                   <div className="ddate" style={{ marginTop: 3 }}>Digital copy + physical location</div>
                 </div>
 
-                {(documentsList || [])
-                  .filter((doc) => {
-                    if (docFilterPropertyName && doc.propertyName !== docFilterPropertyName) return false;
-                    if (docCategory !== 'all' && doc.category !== docCategory) return false;
-                    const q = (docSearch || '').toLowerCase();
-                    if (!q) return true;
-                    const categoryLabel = DOCUMENT_CATEGORIES.find(c => c.id === doc.category)?.label || doc.category;
-                    return [
-                      doc.name,
-                      doc.propertyName,
-                      doc.physicalLocation,
-                      doc.digitalFileName,
-                      categoryLabel,
-                    ].some(v => String(v || '').toLowerCase().includes(q));
-                  })
-                  .map((doc, idx) => {
-                    const hasPhysical = !!doc.hasPhysicalCopy;
-                    const hasDigital = !!doc.hasDigitalCopy;
-                    const categoryLabel = DOCUMENT_CATEGORIES.find(c => c.id === doc.category)?.label || doc.category;
+                {(() => {
+                  if (propDocsLoading) {
                     return (
                       <div
-                        key={doc.id || doc._id || idx}
+                        style={{
+                          background: '#fff',
+                          border: '1px solid var(--border)',
+                          borderRadius: 0,
+                          padding: '12px 14px',
+                          boxShadow: 'var(--shadow-sm)',
+                        }}
+                      >
+                        <div style={{ fontSize: 13, color: 'var(--muted)' }}>Loading documents…</div>
+                      </div>
+                    );
+                  }
+                  if (!propertyDocuments.length) {
+                    return (
+                      <div
+                        style={{
+                          background: '#fff',
+                          border: '1px solid var(--border)',
+                          borderRadius: 0,
+                          padding: '12px 14px',
+                          boxShadow: 'var(--shadow-sm)',
+                        }}
+                      >
+                        <div style={{ fontSize: 13, color: 'var(--muted)' }}>No documents found.</div>
+                      </div>
+                    );
+                  }
+                  const digitalDocsByProperty = (documentsList || []).reduce((acc, d) => {
+                    const p = (d?.propertyName || '').trim();
+                    if (!p || p === '—') return acc;
+                    if (!d?.digitalFileUrl) return acc;
+                    if (!acc[p]) acc[p] = [];
+                    acc[p].push(d);
+                    return acc;
+                  }, {});
+
+                  const applyCardFilters = (r) => {
+                    if (docFilterPropertyName && r.propertyName !== docFilterPropertyName) return false;
+                    if (docCategory !== 'all') {
+                      const hasDeeds = !!(r.titleDeedsPhysicalLocation || '').trim() || !!(r.titleDeedsDigitalDescription || '').trim();
+                      const hasPlans = !!(r.plansDescription || '').trim();
+                      const hasPermits = !!(r.permitsDescription || '').trim();
+                      const hasPlansPermits = hasPlans || hasPermits;
+                      const hasLegal = !!(r.leaseAgreementDescription || '').trim() || !!(r.fileLocationNotes || '').trim();
+                      if (docCategory === 'deeds' && !hasDeeds) return false;
+                      if (docCategory === 'plans' && !hasPlans) return false;
+                      if (docCategory === 'permits' && !hasPermits) return false;
+                      if (docCategory === 'valuations' && !hasPlansPermits) return false;
+                      if (docCategory === 'legal' && !hasLegal) return false;
+                    }
+                    const q = (docSearch || '').toLowerCase();
+                    if (!q) return true;
+                    return [
+                      r.propertyName,
+                      r.propertyUse,
+                      r.titleDeedsPhysicalLocation,
+                      r.titleDeedsDigitalDescription,
+                      r.plansDescription,
+                      r.leaseAgreementDescription,
+                      r.fileLocationNotes,
+                      ...(digitalDocsByProperty[r.propertyName] || []).flatMap(dd => [dd.name, dd.digitalFileName, dd.digitalFileUrl]),
+                    ].some(v => String(v || '').toLowerCase().includes(q));
+                  };
+
+                  const rows = propertyDocuments.filter(applyCardFilters);
+                  if (!rows.length) {
+                    return (
+                      <div
+                        style={{
+                          background: '#fff',
+                          border: '1px solid var(--border)',
+                          borderRadius: 0,
+                          padding: '12px 14px',
+                          boxShadow: 'var(--shadow-sm)',
+                        }}
+                      >
+                        <div style={{ fontSize: 13, color: 'var(--muted)' }}>No documents match the current filters.</div>
+                      </div>
+                    );
+                  }
+                  return rows.map((row) => {
+                    const hasDigital = !!(row.titleDeedsDigitalDescription || '').trim();
+                    const digitalList = digitalDocsByProperty[row.propertyName] || [];
+                    return (
+                      <div
+                        key={row._id || row.id}
                         style={{
                           background: '#fff',
                           border: '1px solid var(--border)',
@@ -1854,40 +1929,90 @@ export default function AppDashboard() {
                           boxShadow: 'var(--shadow-sm)',
                           cursor: 'pointer',
                         }}
-                        onClick={() => setSelectedDoc(doc)}
+                        onClick={() => setPropDocEdit(row)}
                       >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                           <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--muted)' }}>
-                            {doc.propertyName || '—'} • {categoryLabel}
+                            {row.propertyName || '—'} • {row.propertyUse || '—'}
                           </div>
                           <div style={{ fontSize: 12 }}>
                             <span className={hasDigital ? 'ins-y' : 'ins-n'}>{hasDigital ? '✓ Digital' : '✗ No digital'}</span>
                           </div>
                         </div>
-                        <div className="tdname" style={{ marginBottom: 10 }}>
-                          {doc.name}
+                        <div className="tdname" style={{ marginBottom: 4 }}>
+                          {row.titleDeedsDigitalDescription || row.titleDeedsPhysicalLocation || 'Title deeds & filing'}
                         </div>
-                        <div style={{ marginTop: 10, borderTop: '1px solid #e0e4e8', paddingTop: 10, fontSize: 12 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #e0e4e8' }}>
-                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Physical copy</span>
+                        <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 8 }}>
+                          Filing summary
+                        </div>
+                        <div style={{ marginTop: 8, borderTop: '1px solid #e0e4e8', paddingTop: 8, fontSize: 12 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
+                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Title deeds (physical)</span>
+                            <span style={{ textAlign: 'right', maxWidth: '60%' }}>{row.titleDeedsPhysicalLocation || '—'}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
+                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Title deeds (digital)</span>
+                            <span style={{ textAlign: 'right', maxWidth: '60%' }}>{row.titleDeedsDigitalDescription || '—'}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
+                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Plans / Permits</span>
                             <span style={{ textAlign: 'right', maxWidth: '60%' }}>
-                              {hasPhysical ? (doc.physicalLocation || 'Recorded') : 'No physical copy'}
+                              {row.plansDescription || '—'}{row.plansDescription && row.permitsDescription ? ' · ' : ''}{row.permitsDescription || ''}
                             </span>
                           </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #e0e4e8' }}>
-                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Digital file</span>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
+                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Lease / Notes</span>
                             <span style={{ textAlign: 'right', maxWidth: '60%' }}>
-                              {hasDigital ? (doc.digitalFileName || 'Uploaded') : 'No digital file'}
+                              {row.leaseAgreementDescription || '—'}{row.leaseAgreementDescription && row.fileLocationNotes ? ' · ' : ''}{row.fileLocationNotes || ''}
                             </span>
                           </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0' }}>
-                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Date</span>
-                            <span style={{ textAlign: 'right', maxWidth: '60%' }}>{doc.date || '—'}</span>
-                          </div>
+                          {digitalList.length > 0 ? (
+                            <div style={{ marginTop: 6 }}>
+                              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 2 }}>
+                                Digital files
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                {digitalList.slice(0, 3).map((d) => (
+                                  <a
+                                    key={d.id}
+                                    href={d.digitalFileUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    style={{ color: 'var(--maroon)', textDecoration: 'none', fontSize: 12 }}
+                                    title={d.digitalFileName || d.digitalFileUrl}
+                                    onClick={e => e.stopPropagation()}
+                                  >
+                                    {d.name || d.digitalFileName || 'Digital file'}
+                                  </a>
+                                ))}
+                                {digitalList.length > 3 && (
+                                  <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                    +{digitalList.length - 3} more…
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ) : (
+                            <div style={{ marginTop: 6 }}>
+                              <button
+                                type="button"
+                                className="btn btn-outline btn-sm"
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  const prop = properties.find(p => p.name === row.propertyName);
+                                  setDocUploadPropertyId(prop?.id || '');
+                                  setDocUploadOpen(true);
+                                }}
+                              >
+                                + Add digital document
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
-                  })}
+                  });
+                })()}
               </div>
 
               <div className="pg-hd" style={{ marginTop: 32 }}>
@@ -1903,6 +2028,15 @@ export default function AppDashboard() {
                 ) : !propertyDocuments.length ? (
                   <div style={{ fontSize: 13, color: 'var(--muted)', padding: '8px 0' }}>No property document register data found.</div>
                 ) : (() => {
+                  const digitalDocsByProperty = (documentsList || []).reduce((acc, d) => {
+                    const p = (d?.propertyName || '').trim();
+                    if (!p || p === '—') return acc;
+                    if (!d?.digitalFileUrl) return acc;
+                    if (!acc[p]) acc[p] = [];
+                    acc[p].push(d);
+                    return acc;
+                  }, {});
+
                   const applyDocFilters = (r) => {
                     if (docFilterPropertyName && r.propertyName !== docFilterPropertyName) return false;
                     if (docCategory !== 'all') {
@@ -1926,6 +2060,7 @@ export default function AppDashboard() {
                       r.plansDescription,
                       r.leaseAgreementDescription,
                       r.fileLocationNotes,
+                      ...(digitalDocsByProperty[r.propertyName] || []).flatMap(dd => [dd.name, dd.digitalFileName, dd.digitalFileUrl]),
                     ].some(v => String(v || '').toLowerCase().includes(q))) return false;
                     return true;
                   };
@@ -1950,6 +2085,7 @@ export default function AppDashboard() {
                         <th>Permits</th>
                         <th>Lease</th>
                         <th>Notes</th>
+                        <th>Digital files</th>
                         <th style={{ width: 100 }}>Actions</th>
                       </tr>
                     </thead>
@@ -1964,6 +2100,33 @@ export default function AppDashboard() {
                           <td>{row.permitsDescription}</td>
                           <td>{row.leaseAgreementDescription}</td>
                           <td>{row.fileLocationNotes}</td>
+                          <td style={{ maxWidth: 320 }}>
+                            {(() => {
+                              const list = (digitalDocsByProperty[row.propertyName] || []);
+                              if (!list.length) return <span style={{ color: 'var(--muted)' }}>—</span>;
+                              return (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  {list.slice(0, 6).map((d) => (
+                                    <a
+                                      key={d.id}
+                                      href={d.digitalFileUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{ color: 'var(--maroon)', textDecoration: 'none', fontSize: 12 }}
+                                      title={d.digitalFileName || d.digitalFileUrl}
+                                    >
+                                      {d.name || d.digitalFileName || 'Digital file'}
+                                    </a>
+                                  ))}
+                                  {list.length > 6 && (
+                                    <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                      +{list.length - 6} more…
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </td>
                           <td>
                             <button type="button" className="btn btn-outline btn-sm" style={{ marginRight: 4 }} onClick={() => setPropDocEdit(row)}>Edit</button>
                             <button type="button" className="btn btn-outline btn-sm" onClick={() => handleDeletePropertyDocument(row)}>Delete</button>
@@ -2296,7 +2459,7 @@ export default function AppDashboard() {
 
         {/* ════ UPLOAD DOCUMENT MODAL ════ */}
         {docUploadOpen && (
-          <div style={S.mbg} onClick={() => { setDocUploadOpen(false); setDocUploadFile(null); }}>
+          <div style={S.mbg} onClick={() => { setDocUploadOpen(false); setDocUploadFile(null); setDocUploadPropertyId(''); }}>
             <div className="modal" style={{ maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
               <div className="mhd">
                 <button type="button" className="mx" onClick={() => { setDocUploadOpen(false); setDocUploadFile(null); }}>×</button>
@@ -2318,7 +2481,12 @@ export default function AppDashboard() {
                     </div>
                     <div>
                       <label className="ml" htmlFor="doc-property-id">Property</label>
-                      <select className="ms" id="doc-property-id">
+                      <select
+                        className="ms"
+                        id="doc-property-id"
+                        value={docUploadPropertyId}
+                        onChange={e => setDocUploadPropertyId(e.target.value)}
+                      >
                         <option value="">— General</option>
                         {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                       </select>
