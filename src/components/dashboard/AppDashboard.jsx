@@ -264,6 +264,8 @@ const S = {
 /* ─── documents ────────────────────────────────────────────────── */
 const DOCUMENT_CATEGORIES = [
   { id: 'deeds', label: 'Title Deeds', icon: '📜' },
+  { id: 'plans', label: 'Plans', icon: '📐' },
+  { id: 'permits', label: 'Permits', icon: '📑' },
   { id: 'insurance', label: 'Insurance', icon: '🛡️' },
   { id: 'valuations', label: 'Valuations', icon: '📊' },
   { id: 'legal', label: 'Legal', icon: '📄' },
@@ -1821,36 +1823,28 @@ export default function AppDashboard() {
                   <div className="ddate" style={{ marginTop: 3 }}>Digital copy + physical location</div>
                 </div>
 
-                {(propertyDocuments || [])
-                  .filter((row) => {
-                    if (docFilterPropertyName && row.propertyName !== docFilterPropertyName) return false;
-                    if (docCategory !== 'all') {
-                      const hasDeeds = !!(row.titleDeedsPhysicalLocation || '').trim() || !!(row.titleDeedsDigitalDescription || '').trim();
-                      const hasPlansPermits = !!(row.plansDescription || '').trim() || !!(row.permitsDescription || '').trim();
-                      const hasLegal = !!(row.leaseAgreementDescription || '').trim() || !!(row.fileLocationNotes || '').trim();
-                      if (docCategory === 'deeds' && !hasDeeds) return false;
-                      if (docCategory === 'valuations' && !hasPlansPermits) return false;
-                      if (docCategory === 'legal' && !hasLegal) return false;
-                      if (docCategory === 'insurance') return true;
-                    }
+                {(documentsList || [])
+                  .filter((doc) => {
+                    if (docFilterPropertyName && doc.propertyName !== docFilterPropertyName) return false;
+                    if (docCategory !== 'all' && doc.category !== docCategory) return false;
                     const q = (docSearch || '').toLowerCase();
                     if (!q) return true;
+                    const categoryLabel = DOCUMENT_CATEGORIES.find(c => c.id === doc.category)?.label || doc.category;
                     return [
-                      row.propertyName,
-                      row.propertyUse,
-                      row.titleDeedsPhysicalLocation,
-                      row.titleDeedsDigitalDescription,
-                      row.plansDescription,
-                      row.leaseAgreementDescription,
-                      row.fileLocationNotes,
+                      doc.name,
+                      doc.propertyName,
+                      doc.physicalLocation,
+                      doc.digitalFileName,
+                      categoryLabel,
                     ].some(v => String(v || '').toLowerCase().includes(q));
                   })
-                  .map((row, idx) => {
-                    const hasPhysical = !!row.titleDeedsPhysicalLocation;
-                    const hasDigital = !!row.titleDeedsDigitalDescription;
+                  .map((doc, idx) => {
+                    const hasPhysical = !!doc.hasPhysicalCopy;
+                    const hasDigital = !!doc.hasDigitalCopy;
+                    const categoryLabel = DOCUMENT_CATEGORIES.find(c => c.id === doc.category)?.label || doc.category;
                     return (
                       <div
-                        key={row._id || row.id || idx}
+                        key={doc.id || doc._id || idx}
                         style={{
                           background: '#fff',
                           border: '1px solid var(--border)',
@@ -1860,39 +1854,35 @@ export default function AppDashboard() {
                           boxShadow: 'var(--shadow-sm)',
                           cursor: 'pointer',
                         }}
-                        onClick={() => setPropDocEdit(row)}
+                        onClick={() => setSelectedDoc(doc)}
                       >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                           <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--muted)' }}>
-                            {row.propertyName || '—'} • {row.propertyUse || '—'}
+                            {doc.propertyName || '—'} • {categoryLabel}
                           </div>
                           <div style={{ fontSize: 12 }}>
                             <span className={hasDigital ? 'ins-y' : 'ins-n'}>{hasDigital ? '✓ Digital' : '✗ No digital'}</span>
                           </div>
                         </div>
                         <div className="tdname" style={{ marginBottom: 10 }}>
-                          {row.titleDeedsDigitalDescription || row.titleDeedsPhysicalLocation || 'Title deeds & filing'}
+                          {doc.name}
                         </div>
                         <div style={{ marginTop: 10, borderTop: '1px solid #e0e4e8', paddingTop: 10, fontSize: 12 }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #e0e4e8' }}>
-                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Title deeds (physical)</span>
-                            <span style={{ textAlign: 'right', maxWidth: '60%' }}>{row.titleDeedsPhysicalLocation || '—'}</span>
-                          </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #e0e4e8' }}>
-                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Title deeds (digital)</span>
-                            <span style={{ textAlign: 'right', maxWidth: '60%' }}>{row.titleDeedsDigitalDescription || '—'}</span>
-                          </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #e0e4e8' }}>
-                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Plans / Permits</span>
+                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Physical copy</span>
                             <span style={{ textAlign: 'right', maxWidth: '60%' }}>
-                              {row.plansDescription || '—'}{row.plansDescription && row.permitsDescription ? ' · ' : ''}{row.permitsDescription || ''}
+                              {hasPhysical ? (doc.physicalLocation || 'Recorded') : 'No physical copy'}
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #e0e4e8' }}>
+                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Digital file</span>
+                            <span style={{ textAlign: 'right', maxWidth: '60%' }}>
+                              {hasDigital ? (doc.digitalFileName || 'Uploaded') : 'No digital file'}
                             </span>
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0' }}>
-                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Lease / Notes</span>
-                            <span style={{ textAlign: 'right', maxWidth: '60%' }}>
-                              {row.leaseAgreementDescription || '—'}{row.leaseAgreementDescription && row.fileLocationNotes ? ' · ' : ''}{row.fileLocationNotes || ''}
-                            </span>
+                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Date</span>
+                            <span style={{ textAlign: 'right', maxWidth: '60%' }}>{doc.date || '—'}</span>
                           </div>
                         </div>
                       </div>
@@ -1917,9 +1907,13 @@ export default function AppDashboard() {
                     if (docFilterPropertyName && r.propertyName !== docFilterPropertyName) return false;
                     if (docCategory !== 'all') {
                       const hasDeeds = !!(r.titleDeedsPhysicalLocation || '').trim() || !!(r.titleDeedsDigitalDescription || '').trim();
-                      const hasPlansPermits = !!(r.plansDescription || '').trim() || !!(r.permitsDescription || '').trim();
+                      const hasPlans = !!(r.plansDescription || '').trim();
+                      const hasPermits = !!(r.permitsDescription || '').trim();
+                      const hasPlansPermits = hasPlans || hasPermits;
                       const hasLegal = !!(r.leaseAgreementDescription || '').trim() || !!(r.fileLocationNotes || '').trim();
                       if (docCategory === 'deeds' && !hasDeeds) return false;
+                      if (docCategory === 'plans' && !hasPlans) return false;
+                      if (docCategory === 'permits' && !hasPermits) return false;
                       if (docCategory === 'valuations' && !hasPlansPermits) return false;
                       if (docCategory === 'legal' && !hasLegal) return false;
                     }
@@ -2355,8 +2349,21 @@ export default function AppDashboard() {
                   </div>
                 </div>
                 <div className="mfoot">
-                  <button type="button" className="btn btn-outline" onClick={() => { setDocUploadOpen(false); setDocUploadFile(null); }}>Cancel</button>
-                  <button type="submit" className="btn btn-maroon">Add document</button>
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={() => { setDocUploadOpen(false); setDocUploadFile(null); }}
+                    disabled={docUploading}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-maroon"
+                    disabled={docUploading}
+                  >
+                    {docUploading ? 'Uploading…' : 'Add document'}
+                  </button>
                 </div>
               </form>
             </div>
