@@ -447,6 +447,18 @@ button:disabled { opacity: 0.7; pointer-events: none; }
   .sp-grid{grid-template-columns:1fr;}
   .dashboard-body{padding:calc(58px + 16px) 16px 24px !important;}
   .toast{left:16px;right:16px;bottom:calc(20px + var(--safe-bottom));border-radius:10px;}
+  /* Documents vault (expandable table): keep columns compact */
+  .tw .doc-vault-table{min-width:0 !important;}
+  .tw .doc-vault-table table{min-width:0 !important;}
+  .tw .doc-vault-row-detail table{min-width:0 !important;}
+  .doc-vault-table th,.doc-vault-table td{padding:8px 8px !important;font-size:12px !important;}
+  .doc-vault-row-detail td{padding:10px 8px !important;font-size:12px !important;}
+  .doc-vault-table .btn.btn-sm,.doc-vault-row-detail .btn.btn-sm{min-height:30px !important;padding:0 10px !important;font-size:11px !important;white-space:nowrap;}
+
+  /* Documents summary table (Register) */
+  .tw .table{min-width:0 !important;}
+  .tw .table th,.tw .table td{padding:8px 8px !important;font-size:12px !important;white-space:nowrap;}
+  .tw .table .btn.btn-sm{min-height:30px !important;padding:0 10px !important;font-size:11px !important;white-space:nowrap;}
 }
 /* Register mobile: expandable rows */
 .register-mobile{max-width:100%;min-width:0;}

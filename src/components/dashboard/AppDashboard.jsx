@@ -2105,7 +2105,6 @@ export default function AppDashboard() {
                             <tr>
                               <th style={{ width: 44 }} aria-label="Expand" />
                               <th>Property</th>
-                              <th>Use</th>
                               <th>Compliance</th>
                               <th style={{ width: 140 }}>Actions</th>
                             </tr>
@@ -2133,7 +2132,6 @@ export default function AppDashboard() {
                                   >
                                     <td style={{ fontSize: 14, color: 'var(--muted)', verticalAlign: 'middle' }}>{expanded ? '▼' : '▶'}</td>
                                     <td style={{ fontWeight: 600, color: 'var(--navy)', verticalAlign: 'middle' }}>{row.propertyName}</td>
-                                    <td style={{ color: 'var(--body)', verticalAlign: 'middle' }}>{row.propertyUse || '—'}</td>
                                     <td style={{ verticalAlign: 'middle' }}>
                                       <span
                                         style={{
@@ -2156,7 +2154,7 @@ export default function AppDashboard() {
                                   </tr>
                                   {expanded && (
                                     <tr className="doc-vault-row-detail">
-                                      <td colSpan={5} style={{ padding: 0, borderBottom: '1px solid var(--border)' }}>
+                                      <td colSpan={4} style={{ padding: 0, borderBottom: '1px solid var(--border)' }}>
                                         <div style={{ padding: '14px 16px 18px' }}>
                                           <div style={{ overflowX: 'auto' }}>
                                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, background: '#fff', border: '1px solid var(--border)' }}>
@@ -2187,19 +2185,6 @@ export default function AppDashboard() {
                                                           >
                                                             View
                                                           </a>
-                                                          {item.viewDoc && (
-                                                            <button
-                                                              type="button"
-                                                              className="btn btn-outline btn-sm"
-                                                              style={{ marginRight: 6, minWidth: 58, minHeight: 30, padding: '0 8px', fontSize: 11 }}
-                                                              onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                setSelectedDoc(item.viewDoc);
-                                                              }}
-                                                            >
-                                                              Details
-                                                            </button>
-                                                          )}
                                                         </>
                                                       ) : (
                                                         <button
@@ -2305,8 +2290,7 @@ export default function AppDashboard() {
                     <thead>
                       <tr>
                         <th>Property</th>
-                        <th>Use</th>
-                        <th>Title Deeds (Physical)</th>
+                        <th style={{ maxWidth: 180 }}>Title Deeds (Physical)</th>
                         <th>Title Deeds (Digital)</th>
                         <th>Plans</th>
                         <th>Permits</th>
@@ -2320,9 +2304,32 @@ export default function AppDashboard() {
                       {tableRows.map((row) => (
                         <tr key={row._id || row.id}>
                           <td>{row.propertyName}</td>
-                          <td>{row.propertyUse}</td>
-                          <td>{row.titleDeedsPhysicalLocation}</td>
-                          <td>{row.titleDeedsDigitalDescription}</td>
+                          <td style={{ maxWidth: 180 }}>
+                            <div
+                              title={row.titleDeedsPhysicalLocation || ''}
+                              style={{
+                                maxWidth: 180,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {row.titleDeedsPhysicalLocation || '—'}
+                            </div>
+                          </td>
+                          <td>
+                            {(() => {
+                              const v = String(row.titleDeedsDigitalDescription || '').trim();
+                              const isUrl = /^https?:\/\//i.test(v);
+                              if (!v) return <span style={{ color: 'var(--muted)' }}>—</span>;
+                              if (!isUrl) return v;
+                              return (
+                                <a href={v} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--maroon)', textDecoration: 'none', fontSize: 12 }}>
+                                  View
+                                </a>
+                              );
+                            })()}
+                          </td>
                           <td>{row.plansDescription}</td>
                           <td>{row.permitsDescription}</td>
                           <td>{row.leaseAgreementDescription}</td>
@@ -2342,7 +2349,7 @@ export default function AppDashboard() {
                                       style={{ color: 'var(--maroon)', textDecoration: 'none', fontSize: 12 }}
                                       title={d.digitalFileName || d.digitalFileUrl}
                                     >
-                                      {d.name || d.digitalFileName || 'Digital file'}
+                                      View
                                     </a>
                                   ))}
                                   {list.length > 6 && (
