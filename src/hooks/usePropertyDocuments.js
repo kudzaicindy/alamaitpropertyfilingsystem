@@ -1,5 +1,21 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from './useAuth';
+import { API_BASE_URL } from '../config/api';
+
+function isPropertyDocumentRecord(row) {
+  if (!row || typeof row !== 'object') return false;
+  const hasPropertyName = !!String(row.propertyName || '').trim();
+  const hasRegisterFields = (
+    row.titleDeedsPhysicalLocation !== undefined ||
+    row.titleDeedsDigitalDescription !== undefined ||
+    row.plansDescription !== undefined ||
+    row.permitsDescription !== undefined ||
+    row.leaseAgreementDescription !== undefined ||
+    row.fileLocationNotes !== undefined
+  );
+  // Property-document rows can legitimately also carry uploaded document metadata.
+  return hasPropertyName && hasRegisterFields;
+}
 
 export function usePropertyDocuments() {
   const { fetchWithAuth, isAuthenticated } = useAuth();
@@ -10,7 +26,7 @@ export function usePropertyDocuments() {
   const fetchPropertyDocuments = useCallback(async () => {
     if (!isAuthenticated) {
       setLoading(false);
-      return;
+      return [];
     }
     try {
       setLoading(true);
@@ -19,10 +35,13 @@ export function usePropertyDocuments() {
       if (!res.ok) throw new Error('Failed to fetch property documents');
       const json = await res.json();
       const list = json.success && Array.isArray(json.data) ? json.data : [];
-      setPropertyDocuments(list);
+      const filtered = list.filter(isPropertyDocumentRecord);
+      setPropertyDocuments(filtered);
+      return filtered;
     } catch (e) {
       setError(e.message || 'Failed to fetch property documents');
       setPropertyDocuments([]);
+      return [];
     } finally {
       setLoading(false);
     }
@@ -66,6 +85,22 @@ export function usePropertyDocuments() {
     await fetchPropertyDocuments();
   }, [fetchWithAuth, fetchPropertyDocuments]);
 
+  const uploadPropertyDocumentFile = async (id, formData) => {
+    if (!id) throw new Error('Missing property document id');
+    const token = localStorage.getItem('token');
+    if (!token) throw new Error('Not authenticated');
+    const base = API_BASE_URL.replace(/\/api$/, '') || API_BASE_URL;
+    const res = await fetch(`${base}/api/property-documents/${id}/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.message || json.error || 'Upload failed');
+    await fetchPropertyDocuments();
+    return json;
+  };
+
   return {
     propertyDocuments,
     isLoading: loading,
@@ -74,6 +109,7 @@ export function usePropertyDocuments() {
     getPropertyDocument,
     updatePropertyDocument,
     deletePropertyDocument,
+    uploadPropertyDocumentFile,
   };
 }
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, Fragment } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { usePropertyData } from '../../hooks/usePropertyData';
@@ -272,6 +272,156 @@ const DOCUMENT_CATEGORIES = [
 ];
 const getCategoryIcon = (cat) => DOCUMENT_CATEGORIES.find((c) => c.id === cat)?.icon || '📄';
 
+/** Assign each digital file to one checklist row. Plan-like files → Plans (not Lease) even if stored as type "legal". */
+function buildVaultChecklist(row, apiDocsForProperty) {
+  const list = (apiDocsForProperty || []).filter((d) => d.digitalFileUrl);
+  const used = new Set();
+  const take = (pred) => {
+    const d = list.find((x) => !used.has(x) && pred(x));
+    if (d) used.add(d);
+    return d || null;
+  };
+  const type = (d) => String(d.category || d.documentType || '').toLowerCase();
+  const title = (d) => `${d.name || ''} ${d.digitalFileName || ''} ${d.title || ''}`.toLowerCase();
+  const urlFromText = (v) => {
+    const s = String(v || '').trim();
+    return s && /^https?:\/\//i.test(s) ? s : null;
+  };
+  const findDocByUrl = (url) => {
+    if (!url) return null;
+    return (apiDocsForProperty || []).find(d => d?.digitalFileUrl === url) || null;
+  };
+  const looksLikePlan = (d) => {
+    const t = title(d);
+    const u = String(d.digitalFileUrl || d.digitalFileKey || '').toLowerCase();
+    if (type(d) === 'plans') return true;
+    if (/\bplan\b|plans?\b|floor\s*plan|layout|blueprint|site\s*plan|as[-\s]?built|existing_plan|_plan|plan\.(pdf|png|jpg)/i.test(t)) return true;
+    if (/\/plan|_plan|existing_plan|floorplan|siteplan/i.test(u)) return true;
+    return /\bplan\b/i.test(t) && !/\blease\b|tenancy|sublease/i.test(t);
+  };
+  const looksLikeLease = (d) => /\blease\b|tenancy|letting|rental\s*agre|sublease|landlord/i.test(title(d));
+
+  const deedsDoc = take((d) => type(d) === 'deeds');
+  const permitsDoc = take((d) => type(d) === 'permits');
+  const plansDoc = take((d) => type(d) === 'plans')
+    || take((d) => looksLikePlan(d) && type(d) !== 'deeds' && type(d) !== 'permits');
+  const leaseDoc = take((d) => type(d) === 'legal' && looksLikeLease(d) && !looksLikePlan(d))
+    || take((d) => type(d) === 'legal' && !looksLikePlan(d));
+  const generalDoc = take((d) => type(d) === 'general');
+
+  const slot = (doc) => (doc ? { url: doc.digitalFileUrl, doc } : null);
+  const digDeeds = slot(deedsDoc);
+  const digPlans = slot(plansDoc);
+  const digPermits = slot(permitsDoc);
+  const digLease = slot(leaseDoc);
+  const digGeneral = slot(generalDoc);
+
+  // Fallback: sometimes the property register stores the uploaded filename/text,
+  // while /api/documents grouping might not have matched perfectly.
+  // If we can find a matching uploaded doc by filename/text, enable View correctly.
+  const norm2 = (s) => String(s || '')
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const findByExpected = (docType, expectedText) => {
+    const expected = norm2(expectedText);
+    if (!expected) return null;
+    const match = (apiDocsForProperty || []).find((d) => {
+      if (!d?.digitalFileUrl) return false;
+      if (type(d) !== docType) return false;
+      const file = norm2(d.digitalFileName || '');
+      const titleTxt = norm2(d.title || d.name || '');
+      const key = norm2(d.digitalFileKey || '');
+      return (
+        (file && file.includes(expected)) ||
+        (titleTxt && titleTxt.includes(expected)) ||
+        (key && key.includes(expected)) ||
+        (expected && file && expected.includes(file))
+      );
+    });
+    return match ? { url: match.digitalFileUrl, doc: match } : null;
+  };
+
+  const digDeedsFinal = digDeeds || findByExpected('deeds', row.titleDeedsDigitalDescription);
+  const digPlansFinal = digPlans || findByExpected('plans', row.plansDescription);
+  const digPermitsFinal = digPermits || findByExpected('permits', row.permitsDescription);
+  const digLeaseFinal = digLease || findByExpected('legal', row.leaseAgreementDescription);
+  const digGeneralFinal = digGeneral || findByExpected('general', row.fileLocationNotes);
+
+  // If the property register already stores the URL in the text fields,
+  // enable View directly even if /api/documents doesn't group it correctly.
+  const deedsRegisterUrl = urlFromText(row.titleDeedsDigitalDescription);
+  const plansRegisterUrl = urlFromText(row.plansDescription);
+  const permitsRegisterUrl = urlFromText(row.permitsDescription);
+  const leaseRegisterUrl = urlFromText(row.leaseAgreementDescription);
+  const generalRegisterUrl = urlFromText(row.fileLocationNotes);
+
+  const digDeedsFinalUrl = digDeedsFinal?.url || deedsRegisterUrl;
+  const digPlansFinalUrl = digPlansFinal?.url || plansRegisterUrl;
+  const digPermitsFinalUrl = digPermitsFinal?.url || permitsRegisterUrl;
+  const digLeaseFinalUrl = digLeaseFinal?.url || leaseRegisterUrl;
+  const digGeneralFinalUrl = digGeneralFinal?.url || generalRegisterUrl;
+
+  const digDeedsFinalDoc = digDeedsFinal?.doc || findDocByUrl(digDeedsFinalUrl);
+  const digPlansFinalDoc = digPlansFinal?.doc || findDocByUrl(digPlansFinalUrl);
+  const digPermitsFinalDoc = digPermitsFinal?.doc || findDocByUrl(digPermitsFinalUrl);
+  const digLeaseFinalDoc = digLeaseFinal?.doc || findDocByUrl(digLeaseFinalUrl);
+  const digGeneralFinalDoc = digGeneralFinal?.doc || findDocByUrl(digGeneralFinalUrl);
+
+  const items = [
+    {
+      key: 'deeds',
+      label: 'Title deed',
+      uploadType: 'deeds',
+      physical: !!(row.titleDeedsPhysicalLocation || '').trim(),
+      digital: !!(row.titleDeedsDigitalDescription || '').trim() || !!digDeedsFinalUrl,
+      digitalUrl: digDeedsFinalUrl || null,
+      viewDoc: digDeedsFinalDoc || null,
+    },
+    {
+      key: 'plans',
+      label: 'Plans',
+      uploadType: 'plans',
+      physical: !!(row.plansDescription || '').trim(),
+      digital: !!(row.plansDescription || '').trim() || !!digPlansFinalUrl,
+      digitalUrl: digPlansFinalUrl || null,
+      viewDoc: digPlansFinalDoc || null,
+    },
+    {
+      key: 'permits',
+      label: 'Permits',
+      uploadType: 'permits',
+      physical: !!(row.permitsDescription || '').trim(),
+      digital: !!(row.permitsDescription || '').trim() || !!digPermitsFinalUrl,
+      digitalUrl: digPermitsFinalUrl || null,
+      viewDoc: digPermitsFinalDoc || null,
+    },
+    {
+      key: 'lease',
+      label: 'Lease agreement',
+      uploadType: 'legal',
+      physical: !!(row.leaseAgreementDescription || '').trim(),
+      digital: !!(row.leaseAgreementDescription || '').trim() || !!digLeaseFinalUrl,
+      digitalUrl: digLeaseFinalUrl || null,
+      viewDoc: digLeaseFinalDoc || null,
+    },
+    {
+      key: 'general',
+      label: 'General docs',
+      uploadType: 'general',
+      physical: !!(row.fileLocationNotes || '').trim(),
+      digital: !!(row.fileLocationNotes || '').trim() || !!digGeneralFinalUrl,
+      digitalUrl: digGeneralFinalUrl || null,
+      viewDoc: digGeneralFinalDoc || null,
+    },
+  ];
+  const bothCount = items.filter((i) => i.digital && i.physical).length;
+  const missingDigital = items.filter((i) => !i.digital).length;
+  const isFullyComplete = bothCount === items.length;
+  return { items, bothCount, total: items.length, isFullyComplete, missingDigital };
+}
+
 const DOCUMENTS_INITIAL = [
   { id: 'd1', name: 'Title Deed', propertyName: 'Breach',       date: 'Aug 2021', category: 'deeds', hasDigitalCopy: true,  hasPhysicalCopy: true,  physicalLocation: 'Filing cabinet A, drawer 2', digitalFileName: null },
   { id: 'd2', name: 'Title Deed', propertyName: 'Kingsmead',    date: 'Aug 2021', category: 'deeds', hasDigitalCopy: false, hasPhysicalCopy: true,  physicalLocation: 'Safe, office', digitalFileName: null },
@@ -310,14 +460,12 @@ function HoverCard({ children, onClick, style }) {
 
 /* ─── main component ──────────────────────────────────────────── */
 export default function AppDashboard() {
-  const { logout, user } = useAuth();
+  const { logout, user, fetchWithAuth } = useAuth();
   const { properties, isLoading: propLoading, addProperty, updateProperty, deleteProperty } = usePropertyData();
   const { propertyInsurance, vehicleInsurance, assetInsurance, insuredCover, isLoading: insLoading, updateInsurance, deleteInsurance, refreshInsuranceData } = useInsuranceData();
   const {
     documents: documentsList,
-    isLoading: docsLoading,
     uploadDocument,
-    createDocument,
     getDocument,
     refreshDocuments,
   } = useDocuments(properties);
@@ -327,6 +475,8 @@ export default function AppDashboard() {
     getPropertyDocument,
     updatePropertyDocument,
     deletePropertyDocument,
+    uploadPropertyDocumentFile,
+    refreshPropertyDocuments,
   } = usePropertyDocuments();
   const { assets, isLoading: assetsLoading, addAsset: apiAddAsset, deleteAsset: apiDeleteAsset, refreshAssets } = useAssets();
 
@@ -339,6 +489,9 @@ export default function AppDashboard() {
   const [docUploadOpen, setDocUploadOpen] = useState(false);
   const [docUploadFile, setDocUploadFile] = useState(null);
   const [docUploadPropertyId, setDocUploadPropertyId] = useState('');
+  const [docUploadCategory, setDocUploadCategory] = useState('deeds');
+  const [docVaultCompliance, setDocVaultCompliance] = useState('all'); // all | incomplete | complete
+  const [docVaultExpandedId, setDocVaultExpandedId] = useState(null);
   const [docUploading, setDocUploading] = useState(false);
   const [insCategory, setInsCategory] = useState('all');
   const [insSearch, setInsSearch] = useState('');
@@ -589,39 +742,58 @@ export default function AppDashboard() {
     e.preventDefault();
     const name = document.getElementById('doc-name')?.value?.trim();
     if (!name) { showToast('Enter document name'); return; }
-    const category = document.getElementById('doc-category')?.value || 'legal';
+    const category = docUploadCategory || document.getElementById('doc-category')?.value || 'deeds';
     const referenceId = document.getElementById('doc-property-id')?.value?.trim() || '';
     const hasPhysical = document.getElementById('doc-has-physical')?.checked ?? false;
     const physicalLocation = document.getElementById('doc-physical-location')?.value?.trim() || '';
-    const referenceType = referenceId ? 'property' : 'general';
+    if (!referenceId) { showToast('Select a property'); return; }
+    if (!docUploadFile) { showToast('Choose a file to upload'); return; }
     setDocUploading(true);
     try {
-      if (docUploadFile) {
-        const formData = new FormData();
-        formData.append('file', docUploadFile);
-        formData.append('title', name);
-        formData.append('documentType', category);
-        formData.append('referenceType', referenceType);
-        if (referenceId) formData.append('referenceId', referenceId);
-        formData.append('hasPhysicalCopy', hasPhysical ? 'true' : 'false');
-        if (physicalLocation) formData.append('physicalCopyLocation', physicalLocation);
-        await uploadDocument(formData);
-        showToast('Document uploaded successfully');
-      } else {
-        await createDocument({
-          title: name,
-          documentType: category,
-          referenceType,
-          referenceId: referenceId || undefined,
-          hasPhysicalCopy: hasPhysical,
-          physicalCopyLocation: physicalLocation,
-        });
-        showToast('Document created successfully');
+      const selectedProperty = (properties || []).find((p) => String(p.id || p._id) === referenceId);
+      const selectedOptionText = document.getElementById('doc-property-id')?.selectedOptions?.[0]?.text || '';
+      const norm = (v) => String(v || '').trim().toLowerCase();
+      const selectedName = norm(selectedProperty?.name || selectedOptionText);
+      const pickRow = (rows) => (rows || []).find((r) =>
+        norm(r.propertyName) === selectedName ||
+        norm(r.propertyName).includes(selectedName) ||
+        selectedName.includes(norm(r.propertyName)) ||
+        String(r.referenceId || '') === referenceId ||
+        String(r.propertyId || '') === referenceId
+      );
+      let targetRow = pickRow(propertyDocuments);
+      if (!targetRow) {
+        const refreshedRows = await refreshPropertyDocuments();
+        targetRow = pickRow(refreshedRows);
       }
+      if (!targetRow) {
+        // final fallback: read raw endpoint directly in case hook filtering/state is stale
+        const res = await fetchWithAuth('/api/property-documents');
+        if (res.ok) {
+          const json = await res.json().catch(() => ({}));
+          const rawRows = Array.isArray(json?.data) ? json.data : [];
+          targetRow = pickRow(rawRows);
+        }
+      }
+      const targetRowId = targetRow?._id || targetRow?.id;
+      if (!targetRowId) {
+        throw new Error('No property document register row found for this property');
+      }
+
+      const formData = new FormData();
+      formData.append('file', docUploadFile);
+      formData.append('title', name);
+      formData.append('documentType', category);
+      formData.append('hasPhysicalCopy', hasPhysical ? 'true' : 'false');
+      if (physicalLocation) formData.append('physicalCopyLocation', physicalLocation);
+      await uploadPropertyDocumentFile(targetRowId, formData);
+      showToast('Document uploaded to property register');
       await refreshDocuments();
+      await refreshPropertyDocuments();
       setDocUploadOpen(false);
       setDocUploadFile(null);
       setDocUploadPropertyId('');
+      setDocUploadCategory('deeds');
       document.getElementById('doc-upload-form')?.reset();
     } catch (err) {
       showToast(err.message || 'Failed to save document');
@@ -1776,7 +1948,7 @@ export default function AppDashboard() {
                   <button
                     type="button"
                     className="btn btn-maroon btn-sm"
-                    onClick={() => setDocUploadOpen(true)}
+                    onClick={() => { setDocUploadPropertyId(''); setDocUploadCategory('deeds'); setDocUploadOpen(true); }}
                     disabled={docUploading}
                   >
                     {docUploading ? 'Uploading…' : '↑ Upload'}
@@ -1784,8 +1956,26 @@ export default function AppDashboard() {
                 </div>
               </div>
 
-              <div className="dtabs">
-                {[{ id: 'all', label: 'All' }, ...DOCUMENT_CATEGORIES].map(({ id, label }) => (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10, alignItems: 'center' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--muted)', marginRight: 4 }}>Status</span>
+                {[
+                  { id: 'all', label: 'All' },
+                  { id: 'incomplete', label: 'Incomplete' },
+                  { id: 'complete', label: 'Complete' },
+                ].map(({ id, label }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`dtab ${docVaultCompliance === id ? 'active' : ''}`}
+                    onClick={() => setDocVaultCompliance(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="dtabs" style={{ marginBottom: 8 }}>
+                {[{ id: 'all', label: 'All types' }, ...DOCUMENT_CATEGORIES].map(({ id, label }) => (
                   <button
                     key={id}
                     type="button"
@@ -1797,7 +1987,7 @@ export default function AppDashboard() {
                 ))}
               </div>
 
-              <div className="fbar" style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <div className="fbar" style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14 }}>
                 <select
                   className="ms"
                   style={{ minWidth: 160 }}
@@ -1819,201 +2009,231 @@ export default function AppDashboard() {
                 />
               </div>
 
-              <div className="dashboard-cards-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
-                <div
-                  className="dcard dupload"
-                  onClick={() => setDocUploadOpen(true)}
-                  style={{ margin: 0, borderRadius: 0 }}
-                >
-                  <div className="dicon" style={{ color: 'var(--muted)' }}>↑</div>
-                  <div className="dname">Upload Document</div>
-                  <div className="ddate" style={{ marginTop: 3 }}>Digital copy + physical location</div>
-                </div>
+              {(() => {
+                if (propDocsLoading) {
+                  return <div style={{ fontSize: 14, color: 'var(--muted)', padding: '20px 0' }}>Loading document vault…</div>;
+                }
+                if (!propertyDocuments.length) {
+                  return <div style={{ fontSize: 14, color: 'var(--muted)', padding: '20px 0' }}>No property document register data.</div>;
+                }
 
-                {(() => {
-                  if (propDocsLoading) {
-                    return (
-                      <div
-                        style={{
-                          background: '#fff',
-                          border: '1px solid var(--border)',
-                          borderRadius: 0,
-                          padding: '12px 14px',
-                          boxShadow: 'var(--shadow-sm)',
-                        }}
-                      >
-                        <div style={{ fontSize: 13, color: 'var(--muted)' }}>Loading documents…</div>
-                      </div>
-                    );
-                  }
-                  if (!propertyDocuments.length) {
-                    return (
-                      <div
-                        style={{
-                          background: '#fff',
-                          border: '1px solid var(--border)',
-                          borderRadius: 0,
-                          padding: '12px 14px',
-                          boxShadow: 'var(--shadow-sm)',
-                        }}
-                      >
-                        <div style={{ fontSize: 13, color: 'var(--muted)' }}>No documents found.</div>
-                      </div>
-                    );
-                  }
-                  const digitalDocsByProperty = (documentsList || []).reduce((acc, d) => {
-                    const p = (d?.propertyName || '').trim();
-                    if (!p || p === '—') return acc;
-                    if (!d?.digitalFileUrl) return acc;
-                    if (!acc[p]) acc[p] = [];
-                    acc[p].push(d);
-                    return acc;
-                  }, {});
+                const propertyNameById = new Map((properties || []).map((p) => [String(p.id || p._id || ''), p.name]));
+                const resolveDocPropertyName = (d) => {
+                  const rid = String(d?.referenceId || '');
+                  if (d?.referenceType === 'property' && propertyNameById.has(rid)) return propertyNameById.get(rid);
+                  const p = String(d?.propertyName || '').trim();
+                  if (p && p !== '—') return p;
+                  return null;
+                };
 
-                  const applyCardFilters = (r) => {
-                    if (docFilterPropertyName && r.propertyName !== docFilterPropertyName) return false;
-                    if (docCategory !== 'all') {
-                      const hasDeeds = !!(r.titleDeedsPhysicalLocation || '').trim() || !!(r.titleDeedsDigitalDescription || '').trim();
-                      const hasPlans = !!(r.plansDescription || '').trim();
-                      const hasPermits = !!(r.permitsDescription || '').trim();
-                      const hasPlansPermits = hasPlans || hasPermits;
-                      const hasLegal = !!(r.leaseAgreementDescription || '').trim() || !!(r.fileLocationNotes || '').trim();
-                      if (docCategory === 'deeds' && !hasDeeds) return false;
-                      if (docCategory === 'plans' && !hasPlans) return false;
-                      if (docCategory === 'permits' && !hasPermits) return false;
-                      if (docCategory === 'valuations' && !hasPlansPermits) return false;
-                      if (docCategory === 'legal' && !hasLegal) return false;
-                    }
-                    const q = (docSearch || '').toLowerCase();
-                    if (!q) return true;
-                    return [
-                      r.propertyName,
-                      r.propertyUse,
-                      r.titleDeedsPhysicalLocation,
-                      r.titleDeedsDigitalDescription,
-                      r.plansDescription,
-                      r.leaseAgreementDescription,
-                      r.fileLocationNotes,
-                      ...(digitalDocsByProperty[r.propertyName] || []).flatMap(dd => [dd.name, dd.digitalFileName, dd.digitalFileUrl]),
-                    ].some(v => String(v || '').toLowerCase().includes(q));
-                  };
+                const docsByProperty = {};
+                (documentsList || []).forEach((d) => {
+                  const p = resolveDocPropertyName(d);
+                  if (!p) return;
+                  if (!docsByProperty[p]) docsByProperty[p] = [];
+                  docsByProperty[p].push(d);
+                });
+                const digitalDocsByProperty = (documentsList || []).reduce((acc, d) => {
+                  const p = resolveDocPropertyName(d);
+                  if (!p || !d?.digitalFileUrl) return acc;
+                  if (!acc[p]) acc[p] = [];
+                  acc[p].push(d);
+                  return acc;
+                }, {});
 
-                  const rows = propertyDocuments.filter(applyCardFilters);
-                  if (!rows.length) {
-                    return (
-                      <div
-                        style={{
-                          background: '#fff',
-                          border: '1px solid var(--border)',
-                          borderRadius: 0,
-                          padding: '12px 14px',
-                          boxShadow: 'var(--shadow-sm)',
-                        }}
-                      >
-                        <div style={{ fontSize: 13, color: 'var(--muted)' }}>No documents match the current filters.</div>
-                      </div>
-                    );
+                const applyVaultBase = (r) => {
+                  if (docFilterPropertyName && r.propertyName !== docFilterPropertyName) return false;
+                  if (docCategory !== 'all') {
+                    const hasDeeds = !!(r.titleDeedsPhysicalLocation || '').trim() || !!(r.titleDeedsDigitalDescription || '').trim();
+                    const hasPlans = !!(r.plansDescription || '').trim();
+                    const hasPermits = !!(r.permitsDescription || '').trim();
+                    const hasPlansPermits = hasPlans || hasPermits;
+                    const hasLegal = !!(r.leaseAgreementDescription || '').trim() || !!(r.fileLocationNotes || '').trim();
+                    if (docCategory === 'deeds' && !hasDeeds) return false;
+                    if (docCategory === 'plans' && !hasPlans) return false;
+                    if (docCategory === 'permits' && !hasPermits) return false;
+                    if (docCategory === 'valuations' && !hasPlansPermits) return false;
+                    if (docCategory === 'legal' && !hasLegal) return false;
+                    if (docCategory === 'insurance') return true;
                   }
-                  return rows.map((row) => {
-                    const hasDigital = !!(row.titleDeedsDigitalDescription || '').trim();
-                    const digitalList = digitalDocsByProperty[row.propertyName] || [];
-                    return (
-                      <div
-                        key={row._id || row.id}
-                        style={{
-                          background: '#fff',
-                          border: '1px solid var(--border)',
-                          borderTop: '3px solid ' + (hasDigital ? 'var(--green)' : '#e0e4e8'),
-                          borderRadius: 0,
-                          padding: '12px 14px',
-                          boxShadow: 'var(--shadow-sm)',
-                          cursor: 'pointer',
-                        }}
-                        onClick={() => setPropDocEdit(row)}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--muted)' }}>
-                            {row.propertyName || '—'} • {row.propertyUse || '—'}
-                          </div>
-                          <div style={{ fontSize: 12 }}>
-                            <span className={hasDigital ? 'ins-y' : 'ins-n'}>{hasDigital ? '✓ Digital' : '✗ No digital'}</span>
-                          </div>
-                        </div>
-                        <div className="tdname" style={{ marginBottom: 4 }}>
-                          {row.titleDeedsDigitalDescription || row.titleDeedsPhysicalLocation || 'Title deeds & filing'}
-                        </div>
-                        <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 8 }}>
-                          Filing summary
-                        </div>
-                        <div style={{ marginTop: 8, borderTop: '1px solid #e0e4e8', paddingTop: 8, fontSize: 12 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
-                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Title deeds (physical)</span>
-                            <span style={{ textAlign: 'right', maxWidth: '60%' }}>{row.titleDeedsPhysicalLocation || '—'}</span>
-                          </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
-                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Title deeds (digital)</span>
-                            <span style={{ textAlign: 'right', maxWidth: '60%' }}>{row.titleDeedsDigitalDescription || '—'}</span>
-                          </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
-                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Plans / Permits</span>
-                            <span style={{ textAlign: 'right', maxWidth: '60%' }}>
-                              {row.plansDescription || '—'}{row.plansDescription && row.permitsDescription ? ' · ' : ''}{row.permitsDescription || ''}
-                            </span>
-                          </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
-                            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Lease / Notes</span>
-                            <span style={{ textAlign: 'right', maxWidth: '60%' }}>
-                              {row.leaseAgreementDescription || '—'}{row.leaseAgreementDescription && row.fileLocationNotes ? ' · ' : ''}{row.fileLocationNotes || ''}
-                            </span>
-                          </div>
-                          {digitalList.length > 0 ? (
-                            <div style={{ marginTop: 6 }}>
-                              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 2 }}>
-                                Digital files
-                              </div>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                {digitalList.slice(0, 3).map((d) => (
-                                  <a
-                                    key={d.id}
-                                    href={d.digitalFileUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    style={{ color: 'var(--maroon)', textDecoration: 'none', fontSize: 12 }}
-                                    title={d.digitalFileName || d.digitalFileUrl}
-                                    onClick={e => e.stopPropagation()}
+                  const q = (docSearch || '').toLowerCase();
+                  if (!q) return true;
+                  return [
+                    r.propertyName,
+                    r.propertyUse,
+                    r.titleDeedsPhysicalLocation,
+                    r.titleDeedsDigitalDescription,
+                    r.plansDescription,
+                    r.leaseAgreementDescription,
+                    r.fileLocationNotes,
+                    ...(digitalDocsByProperty[r.propertyName] || []).flatMap(dd => [dd.name, dd.digitalFileName, dd.digitalFileUrl]),
+                  ].some(v => String(v || '').toLowerCase().includes(q));
+                };
+
+                const baseRows = propertyDocuments.filter((r) => {
+                  if (!String(r?.propertyName || '').trim()) return false;
+                  return applyVaultBase(r);
+                });
+                const vaultRows = baseRows.filter((r) => {
+                  const v = buildVaultChecklist(r, docsByProperty[r.propertyName]);
+                  if (docVaultCompliance === 'complete') return v.isFullyComplete;
+                  if (docVaultCompliance === 'incomplete') return !v.isFullyComplete;
+                  return true;
+                });
+
+                const openVaultUpload = (row, uploadType) => {
+                  const prop = properties.find(p => p.name === row.propertyName);
+                  setDocUploadPropertyId(prop?.id || '');
+                  setDocUploadCategory(uploadType || 'deeds');
+                  setDocUploadOpen(true);
+                };
+
+                const dot = (ok) => (
+                  <span style={{ fontSize: 13, fontWeight: 600, color: ok ? 'var(--green)' : 'var(--maroon)' }}>
+                    {ok ? 'Yes' : 'No'}
+                  </span>
+                );
+
+                return (
+                  <>
+                    {!vaultRows.length ? (
+                      <div style={{ fontSize: 14, color: 'var(--muted)', padding: '16px 0' }}>No properties match the current filters.</div>
+                    ) : (
+                      <div className="tw" style={{ overflowX: 'auto' }}>
+                        <table className="table doc-vault-table" style={{ marginTop: 0 }}>
+                          <thead>
+                            <tr>
+                              <th style={{ width: 44 }} aria-label="Expand" />
+                              <th>Property</th>
+                              <th>Use</th>
+                              <th>Compliance</th>
+                              <th style={{ width: 140 }}>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {vaultRows.map((row) => {
+                              const rid = String(row._id || row.id);
+                              const expanded = docVaultExpandedId === rid;
+                              const v = buildVaultChecklist(row, docsByProperty[row.propertyName]);
+                              return (
+                                <Fragment key={rid}>
+                                  <tr
+                                    className="doc-vault-row-main"
+                                    onClick={() => setDocVaultExpandedId(expanded ? null : rid)}
+                                    style={{ cursor: 'pointer' }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        setDocVaultExpandedId(expanded ? null : rid);
+                                      }
+                                    }}
+                                    tabIndex={0}
+                                    role="button"
+                                    aria-expanded={expanded}
                                   >
-                                    {d.name || d.digitalFileName || 'Digital file'}
-                                  </a>
-                                ))}
-                                {digitalList.length > 3 && (
-                                  <span style={{ fontSize: 11, color: 'var(--muted)' }}>
-                                    +{digitalList.length - 3} more…
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          ) : (
-                            <div style={{ marginTop: 6 }}>
-                              <button
-                                type="button"
-                                className="btn btn-outline btn-sm"
-                                onClick={e => {
-                                  e.stopPropagation();
-                                  const prop = properties.find(p => p.name === row.propertyName);
-                                  setDocUploadPropertyId(prop?.id || '');
-                                  setDocUploadOpen(true);
-                                }}
-                              >
-                                + Add digital document
-                              </button>
-                            </div>
-                          )}
-                        </div>
+                                    <td style={{ fontSize: 14, color: 'var(--muted)', verticalAlign: 'middle' }}>{expanded ? '▼' : '▶'}</td>
+                                    <td style={{ fontWeight: 600, color: 'var(--navy)', verticalAlign: 'middle' }}>{row.propertyName}</td>
+                                    <td style={{ color: 'var(--body)', verticalAlign: 'middle' }}>{row.propertyUse || '—'}</td>
+                                    <td style={{ verticalAlign: 'middle' }}>
+                                      <span
+                                        style={{
+                                          fontSize: 12,
+                                          fontWeight: 600,
+                                          padding: '4px 10px',
+                                          borderRadius: 4,
+                                          border: `1px solid ${v.isFullyComplete ? 'var(--green)' : 'var(--gold)'}`,
+                                          color: v.isFullyComplete ? 'var(--green)' : 'var(--gold)',
+                                        }}
+                                      >
+                                        {v.bothCount}/{v.total} {v.isFullyComplete ? 'complete' : 'docs'}
+                                      </span>
+                                    </td>
+                                    <td style={{ verticalAlign: 'middle' }} onClick={(e) => e.stopPropagation()}>
+                                      <button type="button" className="btn btn-outline btn-sm" onClick={() => setPropDocEdit(row)}>
+                                        Edit register
+                                      </button>
+                                    </td>
+                                  </tr>
+                                  {expanded && (
+                                    <tr className="doc-vault-row-detail">
+                                      <td colSpan={5} style={{ padding: 0, borderBottom: '1px solid var(--border)' }}>
+                                        <div style={{ padding: '14px 16px 18px' }}>
+                                          <div style={{ overflowX: 'auto' }}>
+                                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, background: '#fff', border: '1px solid var(--border)' }}>
+                                              <thead>
+                                                <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                                                  <th style={{ textAlign: 'left', padding: '10px 12px', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--muted)' }}>Document</th>
+                                                  <th style={{ textAlign: 'left', padding: '10px 12px', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--muted)' }}>Digital</th>
+                                                  <th style={{ textAlign: 'left', padding: '10px 12px', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--muted)' }}>Physical</th>
+                                                  <th style={{ textAlign: 'right', padding: '10px 12px', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--muted)' }}>Actions</th>
+                                                </tr>
+                                              </thead>
+                                              <tbody>
+                                                {v.items.map((item) => (
+                                                  <tr key={item.key} style={{ borderBottom: '1px solid var(--border-light)' }}>
+                                                    <td style={{ padding: '12px', color: 'var(--ink)' }}>{item.label}{!item.physical && !item.digital && item.key === 'general' ? ' — missing' : ''}</td>
+                                                    <td style={{ padding: '12px' }}>{dot(item.digital)}</td>
+                                                    <td style={{ padding: '12px' }}>{dot(item.physical)}</td>
+                                                    <td style={{ padding: '12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                                      {item.digitalUrl ? (
+                                                        <>
+                                                          <a
+                                                            href={item.digitalUrl}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="btn btn-outline btn-sm"
+                                                            style={{ marginRight: 6, textDecoration: 'none', display: 'inline-block', minWidth: 58, minHeight: 30, lineHeight: '28px', padding: '0 8px', textAlign: 'center', fontSize: 11 }}
+                                                            onClick={(e) => e.stopPropagation()}
+                                                          >
+                                                            View
+                                                          </a>
+                                                          {item.viewDoc && (
+                                                            <button
+                                                              type="button"
+                                                              className="btn btn-outline btn-sm"
+                                                              style={{ marginRight: 6, minWidth: 58, minHeight: 30, padding: '0 8px', fontSize: 11 }}
+                                                              onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setSelectedDoc(item.viewDoc);
+                                                              }}
+                                                            >
+                                                              Details
+                                                            </button>
+                                                          )}
+                                                        </>
+                                                      ) : (
+                                                        <button
+                                                          type="button"
+                                                          className="btn btn-maroon btn-sm"
+                                                          style={{ minHeight: 30, padding: '0 8px', fontSize: 11 }}
+                                                          onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            openVaultUpload(row, item.uploadType);
+                                                          }}
+                                                        >
+                                                          + Upload
+                                                        </button>
+                                                      )}
+                                                    </td>
+                                                  </tr>
+                                                ))}
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  )}
+                                </Fragment>
+                              );
+                            })}
+                          </tbody>
+                        </table>
                       </div>
-                    );
-                  });
-                })()}
-              </div>
+                    )}
+                  </>
+                );
+              })()}
 
               <div className="pg-hd" style={{ marginTop: 32 }}>
                 <div>
@@ -2028,10 +2248,17 @@ export default function AppDashboard() {
                 ) : !propertyDocuments.length ? (
                   <div style={{ fontSize: 13, color: 'var(--muted)', padding: '8px 0' }}>No property document register data found.</div>
                 ) : (() => {
+                  const propertyNameById = new Map((properties || []).map((p) => [String(p.id || p._id || ''), p.name]));
+                  const resolveDocPropertyName = (d) => {
+                    const rid = String(d?.referenceId || '');
+                    if (d?.referenceType === 'property' && propertyNameById.has(rid)) return propertyNameById.get(rid);
+                    const p = String(d?.propertyName || '').trim();
+                    if (p && p !== '—') return p;
+                    return null;
+                  };
                   const digitalDocsByProperty = (documentsList || []).reduce((acc, d) => {
-                    const p = (d?.propertyName || '').trim();
-                    if (!p || p === '—') return acc;
-                    if (!d?.digitalFileUrl) return acc;
+                    const p = resolveDocPropertyName(d);
+                    if (!p || !d?.digitalFileUrl) return acc;
                     if (!acc[p]) acc[p] = [];
                     acc[p].push(d);
                     return acc;
@@ -2459,10 +2686,10 @@ export default function AppDashboard() {
 
         {/* ════ UPLOAD DOCUMENT MODAL ════ */}
         {docUploadOpen && (
-          <div style={S.mbg} onClick={() => { setDocUploadOpen(false); setDocUploadFile(null); setDocUploadPropertyId(''); }}>
+          <div style={S.mbg} onClick={() => { setDocUploadOpen(false); setDocUploadFile(null); setDocUploadPropertyId(''); setDocUploadCategory('deeds'); }}>
             <div className="modal" style={{ maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
               <div className="mhd">
-                <button type="button" className="mx" onClick={() => { setDocUploadOpen(false); setDocUploadFile(null); }}>×</button>
+                <button type="button" className="mx" onClick={() => { setDocUploadOpen(false); setDocUploadFile(null); setDocUploadPropertyId(''); setDocUploadCategory('deeds'); }}>×</button>
                 <div className="mtitle">Upload Document</div>
                 <div className="msub">Digital copy here · physical location below</div>
               </div>
@@ -2475,7 +2702,12 @@ export default function AppDashboard() {
                     </div>
                     <div>
                       <label className="ml" htmlFor="doc-category">Category</label>
-                      <select className="ms" id="doc-category">
+                      <select
+                        className="ms"
+                        id="doc-category"
+                        value={docUploadCategory}
+                        onChange={e => setDocUploadCategory(e.target.value)}
+                      >
                         {DOCUMENT_CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
                       </select>
                     </div>
@@ -2520,7 +2752,7 @@ export default function AppDashboard() {
                   <button
                     type="button"
                     className="btn btn-outline"
-                    onClick={() => { setDocUploadOpen(false); setDocUploadFile(null); }}
+                    onClick={() => { setDocUploadOpen(false); setDocUploadFile(null); setDocUploadPropertyId(''); setDocUploadCategory('deeds'); }}
                     disabled={docUploading}
                   >
                     Cancel

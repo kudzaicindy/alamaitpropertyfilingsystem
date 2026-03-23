@@ -2,6 +2,38 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from './useAuth';
 import { API_BASE_URL } from '../config/api';
 
+function norm(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function inferPropertyFromText(doc, properties = []) {
+  const hay = norm([
+    doc.title,
+    doc.name,
+    doc.digitalFileName,
+    doc.digitalFileKey,
+    doc.digitalFileUrl,
+  ].join(' '));
+  if (!hay) return null;
+  const match = properties.find((p) => {
+    const pn = norm(p.name);
+    return pn && hay.includes(pn);
+  });
+  return match?.name || null;
+}
+
+function isDocumentRecord(doc) {
+  if (!doc || typeof doc !== 'object') return false;
+  const hasDocShape = !!(doc.title || doc.name || doc.documentType || doc.category || doc.digitalFileUrl || doc.digitalFileName);
+  const isPropertyRegisterOnly = !!(doc.propertyName && doc.propertyUse && doc.titleDeedsPhysicalLocation !== undefined && !doc.title && !doc.name);
+  return hasDocShape && !isPropertyRegisterOnly;
+}
+
 /** Map API document to UI shape; pass properties to resolve propertyName from referenceId */
 function toUIDoc(doc, properties = []) {
   const createdAt = doc.createdAt || doc.updatedAt;
@@ -14,6 +46,11 @@ function toUIDoc(doc, properties = []) {
     propertyName = p ? p.name : doc.referenceId;
   } else if (doc.referenceType === 'property_insured' || doc.referenceType === 'insured_cover') {
     propertyName = doc.referenceLabel || doc.referenceId || '—';
+  } else if (doc.referenceType === 'general') {
+    // Some uploads are saved as "general" even when filename/title includes property name.
+    propertyName = inferPropertyFromText(doc, properties) || doc.propertyName || '—';
+  } else if (doc.propertyName) {
+    propertyName = doc.propertyName;
   }
   return {
     id: doc._id || doc.id,
@@ -27,6 +64,7 @@ function toUIDoc(doc, properties = []) {
     physicalLocation: doc.physicalCopyLocation || doc.physicalLocation || '',
     digitalFileName: doc.digitalFileName || null,
     digitalFileUrl: doc.digitalFileUrl || null,
+    digitalFileKey: doc.digitalFileKey || null,
     referenceType: doc.referenceType,
     referenceId: doc.referenceId,
   };
@@ -56,7 +94,8 @@ export function useDocuments(properties = []) {
         if (!res.ok) throw new Error('Failed to fetch documents');
         const json = await res.json();
         const list = json.data ?? json.documents ?? (Array.isArray(json) ? json : []);
-        setDocuments(Array.isArray(list) ? list.map((d) => toUIDoc(d, properties)) : []);
+        const docsOnly = Array.isArray(list) ? list.filter(isDocumentRecord) : [];
+        setDocuments(docsOnly.map((d) => toUIDoc(d, properties)));
       } catch (e) {
         setError(e.message || 'Failed to fetch documents');
         setDocuments([]);
